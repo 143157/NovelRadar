@@ -96,7 +96,7 @@ if ($licenseExitCode -ne 0) {
 
 Write-Host 'Installing required Android SDK packages...'
 $packageFailures = @()
-foreach ($package in @('platform-tools', 'platforms;android-37', 'build-tools;36.0.0')) {
+foreach ($package in @('platform-tools', 'platforms;android-37.2', 'build-tools;36.0.0')) {
     $packageExitCode = Invoke-SdkManager @($package)
     if ($packageExitCode -ne 0) {
         $packageFailures += "$package (exit code $packageExitCode)"

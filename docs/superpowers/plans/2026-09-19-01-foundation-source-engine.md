@@ -6,7 +6,7 @@
 
 **Architecture:** The app is a single Android module with strict package boundaries. Source-engine classes depend on domain models but not Compose, Room, or WorkManager. A `SourceHttpClient` and `ScriptExecutor` interface makes all parsing behavior deterministic in local JVM tests.
 
-**Tech Stack:** PowerShell bootstrap, Android SDK 37, AGP 9.4.0, Gradle 9.6.0, built-in Kotlin, Compose, Kotlin coroutines, OkHttp, MockWebServer, jsoup, Moshi, quickjs-kt, JUnit 4, Truth.
+**Tech Stack:** PowerShell bootstrap, compileSdk 37.2, AGP 9.4.0, Gradle 9.6.0, built-in Kotlin, Compose, Kotlin coroutines, OkHttp, MockWebServer, jsoup, Moshi, quickjs-kt, JUnit 4, Truth.
 
 ---
 
@@ -62,7 +62,7 @@ Copy-Item -Path (Join-Path $cliStage 'cmdline-tools\*') -Destination $cliLatest 
 $sdkManager = Join-Path $cliLatest 'bin\sdkmanager.bat'
 $licenseInput = (1..100 | ForEach-Object { 'y' }) -join [Environment]::NewLine
 $licenseInput | & $sdkManager --sdk_root=$androidSdkDir --licenses | Out-Host
-& $sdkManager --sdk_root=$androidSdkDir 'platform-tools' 'platforms;android-37' 'build-tools;36.0.0'
+& $sdkManager --sdk_root=$androidSdkDir 'platform-tools' 'platforms;android-37.2' 'build-tools;36.0.0'
 
 if (-not (Test-Path -LiteralPath $gradleZip)) {
     Invoke-WebRequest -Uri $gradleUrl -OutFile $gradleZip
@@ -99,7 +99,7 @@ Run:
 & "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" version
 ```
 
-Expected: bootstrap exits `0`; ADB prints a version; `platforms\android-37` and `build-tools\36.0.0` exist.
+Expected: bootstrap exits `0`; ADB prints a version; `platforms\android-37.2` and `build-tools\36.0.0` exist.
 
 - [ ] **Step 5: Commit**
 
@@ -205,7 +205,7 @@ ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 
 - [ ] **Step 3: Configure the Android application**
 
-`app/build.gradle.kts` must use package `com.novelradar.app`, `minSdk = 26`, `compileSdk = 37`, `targetSdk = 36`, Java toolchain 17, Compose enabled, and the version-catalog dependencies above. Add this JVM unit-test substitution so QuickJS tests work on Windows JVM:
+`app/build.gradle.kts` must use package `com.novelradar.app`, `minSdk = 26`, `compileSdk = 37` with `minorApiLevel = 2`, `targetSdk = 36`, Java toolchain 17, Compose enabled, and the version-catalog dependencies above. Add this JVM unit-test substitution so QuickJS tests work on Windows JVM:
 
 ```kotlin
 configurations.matching { it.name.endsWith("UnitTestRuntimeClasspath") }.configureEach {
