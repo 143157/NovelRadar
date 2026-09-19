@@ -6,3 +6,7 @@ build/
 *.iml
 .superpowers/
 .worktrees/
+.tools/
+*.jks
+*.keystore
+app/release/
