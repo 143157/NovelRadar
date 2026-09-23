@@ -3,6 +3,11 @@ $ErrorActionPreference = 'Stop'
 
 function Assert-True([bool] $Condition, [string] $Message) { if (-not $Condition) { throw $Message } }
 
+$expectedCliSha256 = '90AE805D20434428BFFCB699C290860F19BB5F66A67E6B330067E3DE801FB04A'
+$fixedHashes = @($cliSha256, $gradleSha256)
+Assert-True (($fixedHashes | Where-Object { $_.Length -ne 64 -or $_ -notmatch '^[0-9A-F]{64}$' }).Count -eq 0) 'Fixed SHA-256 constants must be 64 hexadecimal characters'
+Assert-True ($cliSha256 -eq $expectedCliSha256) 'CLI SHA-256 constant does not match the official value'
+
 $fixtureRoot = Assert-StagingPath (Join-Path $toolCacheDir 'bootstrap-test-fixtures')
 Remove-SafeTree $fixtureRoot
 New-Item -ItemType Directory -Path $fixtureRoot -Force | Out-Null
