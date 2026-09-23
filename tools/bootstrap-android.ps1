@@ -59,6 +59,11 @@ function Test-ZipReadable([string] $Archive) {
     finally { if ($null -ne $zip) { $zip.Dispose() } }
 }
 
+function Invoke-Download([string] $Url, [string] $OutFile) {
+    if ($null -ne $global:BootstrapDownloadOverride) { & $global:BootstrapDownloadOverride $Url $OutFile; return }
+    Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
+}
+
 function Ensure-VerifiedDownload([string] $Url, [string] $Destination, [string] $ExpectedSha256) {
     $destination = Assert-StagingPath $Destination
     $valid = $false
@@ -70,7 +75,7 @@ function Ensure-VerifiedDownload([string] $Url, [string] $Destination, [string] 
     $temporary = Assert-StagingPath (Join-Path $toolCacheDir ('.download-' + [Guid]::NewGuid().ToString('N') + '.zip'))
     try {
         Write-Host "Downloading $Url"
-        Invoke-WebRequest -Uri $Url -OutFile $temporary -UseBasicParsing
+        Invoke-Download $Url $temporary
         if ((Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash -ne $ExpectedSha256 -or -not (Test-ZipReadable $temporary)) { throw "Downloaded archive failed SHA-256 or ZIP validation: $Url" }
         Move-Item -LiteralPath $temporary -Destination $destination -Force
     } finally { if (Test-Path -LiteralPath $temporary) { Remove-SafeTree $temporary } }
@@ -83,7 +88,17 @@ function Expand-ArchiveToStaging([string] $Archive, [string] $StagingPath) {
     Expand-Archive -LiteralPath $Archive -DestinationPath $safeStaging -Force
 }
 
-function Invoke-SdkManager([string[]] $Arguments, [string] $InputText = '') {
+function Test-CliToolsComplete([string] $Path) {
+    return (Test-Path -LiteralPath (Join-Path $Path 'bin\sdkmanager.bat') -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $Path 'lib\sdkmanager-classpath.jar') -PathType Leaf)
+}
+
+function Test-GradleComplete([string] $Path) {
+    return (Test-Path -LiteralPath (Join-Path $Path 'bin\gradle.bat') -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $Path 'lib\gradle-launcher-9.6.0.jar') -PathType Leaf)
+}
+
+function Invoke-SdkManager([string[]] $Arguments, [string] $InputText = '', [int] $TimeoutSeconds = 120, [bool] $Quiet = $false) {
     $argumentText = $Arguments -join ' '
     $startInfo = New-Object Diagnostics.ProcessStartInfo
     $startInfo.FileName = 'cmd.exe'
@@ -101,11 +116,16 @@ function Invoke-SdkManager([string[]] $Arguments, [string] $InputText = '') {
         $process.StandardInput.Close()
         $outputTask = $process.StandardOutput.ReadToEndAsync()
         $errorTask = $process.StandardError.ReadToEndAsync()
-        $process.WaitForExit()
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            $process.Kill()
+            throw "sdkmanager timed out after $TimeoutSeconds seconds"
+        }
         $output = $outputTask.Result
         $errorOutput = $errorTask.Result
-        if ($output) { Write-Host $output }
-        if ($errorOutput) { Write-Host $errorOutput }
+        if (-not $Quiet) {
+            if ($output) { Write-Host $output }
+            if ($errorOutput) { Write-Host $errorOutput }
+        }
         return $process.ExitCode
     } finally { $process.Dispose() }
 }
@@ -128,10 +148,10 @@ Ensure-Directory $toolCacheDir
 Ensure-Directory (Split-Path -Parent $androidSdkDir)
 $cliStaging = Assert-StagingPath (Join-Path $toolCacheDir 'commandline-tools-staging')
 $sdkManager = Join-Path $sdkToolsDir 'bin\sdkmanager.bat'
-if ((Test-Path -LiteralPath $cliZip -PathType Leaf) -or -not (Test-Path -LiteralPath $sdkManager -PathType Leaf)) {
+if ((Test-Path -LiteralPath $cliZip -PathType Leaf) -or -not (Test-CliToolsComplete $sdkToolsDir)) {
     Ensure-VerifiedDownload $cliUrl $cliZip $cliSha256
 }
-if (-not (Test-Path -LiteralPath $sdkManager -PathType Leaf)) {
+if (-not (Test-CliToolsComplete $sdkToolsDir)) {
     Expand-ArchiveToStaging $cliZip $cliStaging
     $extracted = Join-Path $cliStaging 'cmdline-tools'
     if (-not (Test-Path -LiteralPath (Join-Path $extracted 'bin\sdkmanager.bat') -PathType Leaf)) { throw 'CLI archive lacked cmdline-tools\bin\sdkmanager.bat' }
@@ -154,7 +174,7 @@ foreach ($package in @('platform-tools', 'platforms;android-37.2', 'build-tools;
 Ensure-VerifiedDownload $gradleUrl $gradleZip $gradleSha256
 $gradleStaging = Assert-StagingPath (Join-Path $toolCacheDir "gradle-$gradleVersion-staging")
 $gradleExecutable = Join-Path $gradleDir 'bin\gradle.bat'
-if (-not (Test-Path -LiteralPath $gradleExecutable -PathType Leaf)) {
+if (-not (Test-GradleComplete $gradleDir)) {
     Expand-ArchiveToStaging $gradleZip $gradleStaging
     $gradleExtracted = Join-Path $gradleStaging "gradle-$gradleVersion"
     if (-not (Test-Path -LiteralPath (Join-Path $gradleExtracted 'bin\gradle.bat') -PathType Leaf)) { throw 'Gradle archive lacked expected bin\gradle.bat' }

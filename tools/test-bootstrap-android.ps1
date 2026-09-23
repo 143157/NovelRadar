@@ -20,8 +20,25 @@ try {
     $destination = Join-Path $fixtureRoot 'cached.zip'
     Set-Content -LiteralPath $destination -Value 'corrupt cache' -Encoding ASCII
     $expected = (Get-FileHash -LiteralPath $sourceZip -Algorithm SHA256).Hash
-    Ensure-VerifiedDownload ('file:///' + $sourceZip.Replace('\', '/')) $destination $expected
+    $global:BootstrapDownloadOverride = { param([string] $Url, [string] $OutFile) Copy-Item -LiteralPath $sourceZip -Destination $OutFile -Force }
+    Ensure-VerifiedDownload 'https://fixture.invalid/source.zip' $destination $expected
     Assert-True ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -eq $expected) 'Corrupt cache was not replaced'
+
+    $cliFixture = Join-Path $fixtureRoot 'cli-incomplete'
+    New-Item -ItemType Directory -Path (Join-Path $cliFixture 'bin') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $cliFixture 'bin\sdkmanager.bat') -Value '@echo off' -Encoding ASCII
+    Assert-True (-not (Test-CliToolsComplete $cliFixture)) 'CLI dependency gap was not detected'
+    New-Item -ItemType Directory -Path (Join-Path $cliFixture 'lib') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $cliFixture 'lib\sdkmanager-classpath.jar') -Value 'jar' -Encoding ASCII
+    Assert-True (Test-CliToolsComplete $cliFixture) 'Complete CLI fixture was not accepted'
+
+    $gradleFixture = Join-Path $fixtureRoot 'gradle-incomplete'
+    New-Item -ItemType Directory -Path (Join-Path $gradleFixture 'bin') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $gradleFixture 'bin\gradle.bat') -Value '@echo off' -Encoding ASCII
+    Assert-True (-not (Test-GradleComplete $gradleFixture)) 'Gradle dependency gap was not detected'
+    New-Item -ItemType Directory -Path (Join-Path $gradleFixture 'lib') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $gradleFixture 'lib\gradle-launcher-9.6.0.jar') -Value 'jar' -Encoding ASCII
+    Assert-True (Test-GradleComplete $gradleFixture) 'Complete Gradle fixture was not accepted'
 
     $unicodeInput = 'C:' + [char]92 + [char]0x4E66 + '=' + [char]0x672C + [char]92 + [char]0x00E9
     $unicode = ConvertTo-JavaPropertyValue $unicodeInput
@@ -30,10 +47,15 @@ try {
     Assert-True ($unicode.Contains(([char]92 + '='))) 'Equals sign was not escaped'
 
     $sdkManager = Join-Path $fixtureRoot 'stderr-flood.bat'
+    Set-Content -LiteralPath $sdkManager -Encoding ASCII -Value "@echo off`r`nfor /L %%i in (1,1,2147483647) do @echo stderr %%i 1>&2"
+    $timedOut = $false
+    try { Invoke-SdkManager @('flood') '' 1 $true | Out-Null } catch { $timedOut = $_.Exception.Message -match 'timed out' }
+    Assert-True $timedOut 'stderr flood timeout did not fail and terminate the child process'
     Set-Content -LiteralPath $sdkManager -Encoding ASCII -Value "@echo off`r`nfor /L %%i in (1,1,5000) do @echo stderr %%i 1>&2`r`nexit /b 0"
-    $exitCode = Invoke-SdkManager @('flood')
+    $exitCode = Invoke-SdkManager @('flood') '' 5 $true
     Assert-True ($exitCode -eq 0) 'SDK manager stderr flood did not complete successfully'
     Write-Output 'focused-tests=passed (corrupt-cache, unicode-properties, stderr-flood)'
 } finally {
+    Remove-Variable BootstrapDownloadOverride -Scope Global -ErrorAction SilentlyContinue
     Remove-SafeTree $fixtureRoot
 }
