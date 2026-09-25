@@ -54,8 +54,32 @@ try {
     Set-Content -LiteralPath $sdkManager -Encoding ASCII -Value "@echo off`r`nfor /L %%i in (1,1,5000) do @echo stderr %%i 1>&2`r`nexit /b 0"
     $exitCode = Invoke-SdkManager @('flood') '' 5 $true
     Assert-True ($exitCode -eq 0) 'SDK manager stderr flood did not complete successfully'
+
+    $pidFile = Join-Path $fixtureRoot 'child.pid'
+    $treeFixture = Join-Path $fixtureRoot 'process-tree.bat'
+    $childCommand = "`$child = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep -Seconds 120' -PassThru; Set-Content -LiteralPath '$pidFile' -Value `$child.Id; Wait-Process -Id `$child.Id"
+    Set-Content -LiteralPath $treeFixture -Encoding ASCII -Value "@echo off`r`npowershell.exe -NoProfile -Command `"$childCommand`""
+    $sdkManager = $treeFixture
+    $treeTimedOut = $false
+    try {
+        Invoke-SdkManager @('tree') '' 2 $true | Out-Null
+    } catch {
+        $treeTimedOut = $_.Exception.Message -match 'timed out'
+    }
+    Assert-True $treeTimedOut 'Process-tree fixture did not hit the hard timeout'
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    do {
+        Start-Sleep -Milliseconds 100
+        $childAlive = $false
+        if (Test-Path -LiteralPath $pidFile) {
+            $childPid = [int](Get-Content -LiteralPath $pidFile -Raw).Trim()
+            $childAlive = $null -ne (Get-Process -Id $childPid -ErrorAction SilentlyContinue)
+        }
+    } while ($childAlive -and [DateTime]::UtcNow -lt $deadline)
+    Assert-True (-not $childAlive) 'Timed-out SDK manager descendant remained alive'
     Write-Output 'focused-tests=passed (corrupt-cache, unicode-properties, stderr-flood)'
 } finally {
+    if ($childPid) { Stop-Process -Id $childPid -Force -ErrorAction SilentlyContinue }
     Remove-Variable BootstrapDownloadOverride -Scope Global -ErrorAction SilentlyContinue
     Remove-SafeTree $fixtureRoot
 }

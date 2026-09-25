@@ -98,6 +98,16 @@ function Test-GradleComplete([string] $Path) {
         (Test-Path -LiteralPath (Join-Path $Path 'lib\gradle-launcher-9.6.0.jar') -PathType Leaf)
 }
 
+function Stop-ProcessTree([Diagnostics.Process] $Process) {
+    if ($null -eq $Process -or $Process.HasExited) { return }
+    try {
+        & taskkill.exe /PID $Process.Id /T /F 2>$null | Out-Null
+    } catch {
+        if (-not $Process.HasExited) { $Process.Kill() }
+    }
+    if (-not $Process.WaitForExit(5000) -and -not $Process.HasExited) { $Process.Kill() }
+}
+
 function Invoke-SdkManager([string[]] $Arguments, [string] $InputText = '', [int] $TimeoutSeconds = 120, [bool] $Quiet = $false) {
     $argumentText = $Arguments -join ' '
     $startInfo = New-Object Diagnostics.ProcessStartInfo
@@ -117,7 +127,7 @@ function Invoke-SdkManager([string[]] $Arguments, [string] $InputText = '', [int
         $outputTask = $process.StandardOutput.ReadToEndAsync()
         $errorTask = $process.StandardError.ReadToEndAsync()
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-            $process.Kill()
+            Stop-ProcessTree $process
             throw "sdkmanager timed out after $TimeoutSeconds seconds"
         }
         $output = $outputTask.Result
