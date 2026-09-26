@@ -6,7 +6,7 @@
 
 **Architecture:** A single Android application module keeps the first release simple while separating packages by domain, data/source engine, and feature. Compose observes immutable UI state from ViewModels; repositories isolate Room, files, WorkManager, and the source-rule engine. Network and script execution are cancellable and source-scoped so one failing source cannot fail the whole search.
 
-**Tech Stack:** AGP 9.4.0, Gradle 9.6.0, built-in Kotlin 2.2.10, Compose BOM 2026.09.00, compileSdk 37.2, targetSdk 36, minSdk 26, Room 2.8.5, WorkManager 2.11.2, OkHttp 5.3.0, jsoup 1.23.2, quickjs-kt 1.0.14, Moshi 1.15.2, JUnit 4, MockWebServer, Compose UI tests.
+**Tech Stack:** AGP 9.4.0, Gradle 9.6.0, built-in Kotlin and Compose compiler 2.4.10, Compose BOM 2026.09.00, compileSdk 37.2, targetSdk 36, minSdk 26, Room 2.8.5, WorkManager 2.11.2, OkHttp 5.3.0, jsoup 1.23.2, quickjs-kt 1.0.14, Moshi 1.15.2, JUnit 4, MockWebServer, Compose UI tests.
 
 ---
 

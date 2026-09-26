@@ -144,7 +144,7 @@ Use this dependency contract in `gradle/libs.versions.toml`:
 ```toml
 [versions]
 agp = "9.4.0"
-kotlin = "2.2.10"
+kotlin = "2.4.10"
 ksp = "2.3.6"
 composeBom = "2026.09.00"
 activityCompose = "1.13.0"
@@ -201,7 +201,9 @@ compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 ```
 
-`settings.gradle.kts` must declare `google()`, `mavenCentral()`, `gradlePluginPortal()`, set `rootProject.name = "NovelRadar"`, and include `:app`.
+Compatibility adjustment verified during Task 2: QuickJS 1.0.14 ships Kotlin metadata 2.4.0 and depends on Kotlin stdlib 2.4.10; Kotlin 2.2.10 cannot compile against it. Pin Kotlin and the Compose compiler to 2.4.10, and supply `org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.10` in the root buildscript classpath to upgrade AGP's built-in Kotlin compiler.
+
+`settings.gradle.kts` must declare `google()`, `mavenCentral()`, `gradlePluginPortal()`, set `rootProject.name = "NovelRadar"`, and include `:app`. Apply `org.gradle.toolchains.foojay-resolver-convention` 1.0.0 so Gradle can provision the required Java 17 toolchain when it is not installed locally; do not pin machine-specific JDK or proxy paths in the project.
 
 - [ ] **Step 3: Configure the Android application**
 
@@ -226,13 +228,23 @@ class AppLaunchTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
     @Test fun showsPrimaryNavigation() {
-        compose.onNodeWithText("书架").assertExists()
-        compose.onNodeWithText("搜书").assertExists()
-        compose.onNodeWithText("下载").assertExists()
-        compose.onNodeWithText("设置").assertExists()
+        val labels = listOf("书架", "搜书", "下载", "设置")
+        val selectable = SemanticsMatcher.keyIsDefined(SemanticsProperties.Selected)
+        labels.forEach { label ->
+            compose.onNode(hasText(label) and selectable)
+                .assertExists()
+                .assertHasClickAction()
+                .performClick()
+                .assertIsSelected()
+            labels.filterNot { it == label }.forEach { otherLabel ->
+                compose.onNode(hasText(otherLabel) and selectable).assertIsNotSelected()
+            }
+        }
     }
 }
 ```
+
+Use the Compose test `junit4.v2.createAndroidComposeRule` API. Match selectable navigation nodes so the centered destination heading does not create an ambiguous text match.
 
 - [ ] **Step 5: Implement the minimal themed shell**
 
