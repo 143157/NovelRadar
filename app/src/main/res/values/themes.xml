@@ -1,8 +1,9 @@
 <resources>
-    <style name="Theme.NovelRadar" parent="android:style/Theme.Material.Light.NoActionBar">
+    <style name="Base.Theme.NovelRadar" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:statusBarColor">#FAF8F4</item>
-        <item name="android:navigationBarColor">#FAF8F4</item>
+        <item name="android:navigationBarColor">#241F1B</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowLightNavigationBar">true</item>
     </style>
+
+    <style name="Theme.NovelRadar" parent="Base.Theme.NovelRadar" />
 </resources>
