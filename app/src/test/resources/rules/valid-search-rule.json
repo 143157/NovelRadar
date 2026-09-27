@@ -1,0 +1,21 @@
+{
+  "url": "https://example.test/",
+  "name": "示例",
+  "comment": "保留书源说明",
+  "search": {
+    "url": "https://example.test/search",
+    "method": "post",
+    "data": "{searchkey: %s, searchtype: all}",
+    "result": ".book",
+    "bookName": "a",
+    "author": ".author"
+  },
+  "book": {},
+  "toc": { "item": "#list a" },
+  "chapter": {
+    "title": "h1",
+    "content": "#content",
+    "paragraphTagClosed": false,
+    "paragraphTag": "<br>+"
+  }
+}

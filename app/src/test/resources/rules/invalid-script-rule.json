@@ -1,0 +1,13 @@
+{
+  "url": "https://example.test/",
+  "name": "危险脚本示例",
+  "disabled": true,
+  "search": {
+    "url": "https://example.test/search?q=%s",
+    "method": "GET",
+    "result": ".book",
+    "bookName": "a@js:import('module');"
+  },
+  "toc": { "item": "#list a" },
+  "chapter": { "title": "h1", "content": "#content" }
+}
