@@ -1,5 +1,7 @@
 package com.novelradar.app.source.rule
 
+import com.google.re2j.Pattern
+import com.google.re2j.PatternSyntaxException
 import java.net.URI
 import java.net.URISyntaxException
 import java.util.Locale
@@ -43,6 +45,11 @@ class RuleValidator {
         issues.url("toc.baseUri", rule.toc?.baseUri, template = true)
 
         selectorFields(rule).forEach { (path, expression) -> issues.selector(path, expression) }
+        listOf(
+            "book.url" to rule.book?.url,
+            "chapter.paragraphTag" to rule.chapter?.paragraphTag,
+            "chapter.filterTxt" to rule.chapter?.filterTxt,
+        ).forEach { (path, expression) -> issues.safeRegex(path, expression) }
         // These are regexes or templates, so CSS/XPath grammar does not apply.
         listOf(
             "book.url" to rule.book?.url,
@@ -73,6 +80,19 @@ class RuleValidator {
 
     private fun MutableList<RuleIssue>.template(path: String, value: String?) {
         if (value == null || "%s" !in value) add(RuleIssue(path, "template must contain %s"))
+    }
+
+    private fun MutableList<RuleIssue>.safeRegex(path: String, expression: String?) {
+        if (expression.isNullOrBlank()) return
+        if (expression.toByteArray(Charsets.UTF_8).size > MAX_REGEX_BYTES) {
+            add(RuleIssue(path, "regex exceeds $MAX_REGEX_BYTES UTF-8 bytes"))
+            return
+        }
+        try {
+            Pattern.compile(expression)
+        } catch (_: PatternSyntaxException) {
+            add(RuleIssue(path, "unsupported regex syntax"))
+        }
     }
 
     private fun MutableList<RuleIssue>.url(path: String, value: String?, template: Boolean = false) {
@@ -156,6 +176,7 @@ class RuleValidator {
     private companion object {
         const val SCRIPT_MARKER = "@js:"
         const val MAX_SELECTOR_BYTES = 2 * 1024
+        const val MAX_REGEX_BYTES = 2 * 1024
         const val MAX_SCRIPT_BYTES = 16 * 1024
         val issueOrder = compareBy(RuleIssue::path, RuleIssue::message)
         val forbiddenTokens = Regex(

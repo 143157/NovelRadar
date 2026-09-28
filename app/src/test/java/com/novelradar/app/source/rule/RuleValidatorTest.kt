@@ -152,6 +152,26 @@ class RuleValidatorTest {
     }
 
     @Test
+    fun rejectsUnsupportedAndOversizedRegularExpressionsAtImport() {
+        val rule = validRule().copy(
+            disabled = true,
+            book = BookRuleDto(url = "x".repeat(2049)),
+            chapter = ChapterRuleDto(
+                title = "h1",
+                content = "#content",
+                filterTxt = "(.)\\1",
+                paragraphTag = "(",
+            ),
+        )
+
+        assertThat(validator.validate(rule)).containsExactly(
+            RuleIssue("book.url", "regex exceeds 2048 UTF-8 bytes"),
+            RuleIssue("chapter.filterTxt", "unsupported regex syntax"),
+            RuleIssue("chapter.paragraphTag", "unsupported regex syntax"),
+        ).inOrder()
+    }
+
+    @Test
     fun checksOptionalExpressionsAndDisabledSearchForSafety() {
         val rule = validRule().copy(
             disabled = true,
