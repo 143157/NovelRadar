@@ -13,7 +13,7 @@ coroutines = "1.11.0"
 okhttp = "5.3.0"
 jsoup = "1.23.2"
 moshi = "1.15.2"
-quickjs = "1.0.14"
+quickjs = "1.0.15-nr1"
 coil = "3.3.0"
 truth = "1.4.5"
 turbine = "1.2.1"
@@ -45,7 +45,7 @@ okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver" }
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 moshi = { module = "com.squareup.moshi:moshi", version.ref = "moshi" }
 moshi-kotlin = { module = "com.squareup.moshi:moshi-kotlin", version.ref = "moshi" }
-quickjs = { module = "io.github.dokar3:quickjs-kt", version.ref = "quickjs" }
+quickjs = { module = "com.novelradar.vendor:quickjs-kt-android", version.ref = "quickjs" }
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 junit4 = { module = "junit:junit", version = "4.13.2" }
 truth = { module = "com.google.truth:truth", version.ref = "truth" }
