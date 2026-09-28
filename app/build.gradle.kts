@@ -52,6 +52,10 @@ configurations.matching { it.name.endsWith("UnitTestRuntimeClasspath") }.configu
     }
 }
 
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
@@ -71,6 +75,7 @@ dependencies {
     implementation(platform(libs.okhttp.bom))
     implementation(libs.okhttp)
     implementation(libs.jsoup)
+    implementation(libs.re2j)
     implementation(libs.moshi)
     implementation(libs.moshi.kotlin)
     implementation(libs.quickjs)
@@ -89,5 +94,9 @@ dependencies {
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.junit4)
+    androidTestImplementation(libs.truth)
+    androidTestImplementation(libs.androidx.room.testing)
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
 }
