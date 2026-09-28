@@ -1,0 +1,163 @@
+diff --git a/quickjs/native/jni/mapping/js_value_to_jobject.c b/quickjs/native/jni/mapping/js_value_to_jobject.c
+index c6973b5..1dcd3dc 100644
+--- a/quickjs/native/jni/mapping/js_value_to_jobject.c
++++ b/quickjs/native/jni/mapping/js_value_to_jobject.c
+@@ -14,129 +14,17 @@ static jobject to_java_string(JNIEnv *env, const char *str, size_t length) {
+     return str != NULL ? jni_string_from_utf8(env, str, length) : NULL;
+ }
+ 
+-void replace_dots_with_slashes(char *str) {
+-    if (str == NULL) {
+-        return;
+-    }
+-    size_t len = strlen(str);
+-    for (int i = 0; i < len; ++i) {
+-        if (str[i] == '.') {
+-            str[i] = '/';
+-        }
+-    }
+-}
+-
+ jthrowable js_error_to_java_error(JNIEnv *env, JSContext *context, JSValue error) {
+-    // Get name
+-    JSValue js_name = JS_GetPropertyStr(context, error, "name");
+-
+-    if (JS_IsUndefined(js_name)) {
+-        // Could be arbitrary types
+-        const char *c_str = JS_ToCString(context, error);
+-        const char *str = c_str != NULL ? c_str : "<UNSUPPORTED_ERROR>";
+-        jthrowable java_error = new_qjs_exception(env, "%s", str);
+-        if (c_str != NULL) {
+-            JS_FreeCString(context, c_str);
+-        }
+-        JS_FreeValue(context, js_name);
+-        return java_error;
+-    }
+-
+-    size_t original_name_length = 0;
+-    const char *original_name = JS_ToCStringLen(context, &original_name_length, js_name);
+-    const char *name = original_name != NULL ? original_name : "<UNKNOWN_ERROR>";
+-    size_t name_length = original_name != NULL
+-                         ? original_name_length
+-                         : sizeof("<UNKNOWN_ERROR>") - 1;
+-
+-    jclass java_error_cls = NULL;
+-    if (original_name != NULL &&
+-        memchr(original_name, '\0', original_name_length) == NULL &&
+-        original_name_length < SIZE_MAX) {
+-        char *maybe_cls_name = malloc(original_name_length + 1);
+-        if (maybe_cls_name != NULL) {
+-            memcpy(maybe_cls_name, original_name, original_name_length);
+-            maybe_cls_name[original_name_length] = '\0';
+-            replace_dots_with_slashes(maybe_cls_name);
+-            java_error_cls = (*env)->FindClass(env, maybe_cls_name);
+-            jthrowable exception = try_catch_java_exceptions(env);
+-            if (exception != NULL) {
+-                java_error_cls = NULL;
+-                (*env)->DeleteLocalRef(env, exception);
+-            }
+-            free(maybe_cls_name);
+-        }
+-    }
+-
+-    // Get message
+-    JSValue js_message = JS_GetPropertyStr(context, error, "message");
+-    size_t original_message_length = 0;
+-    const char *original_message = JS_ToCStringLen(
+-            context,
+-            &original_message_length,
+-            js_message);
+-    const char *message = original_message != NULL ? original_message : "<NO_MESSAGE>";
+-    size_t message_length = original_message != NULL
+-                            ? original_message_length
+-                            : sizeof("<NO_MESSAGE>") - 1;
+-
+-    // Get stack trace
++    // A JavaScript-controlled Error.name must never select a Java class or constructor.
++    // Keep the name, message and stack, but always instantiate our fixed exception.
++    char *message = NULL;
++    size_t message_length = 0;
+     char *stack = NULL;
+-    js_error_stack(context, error, &stack);
+-
+-    if (java_error_cls != NULL) {
+-        jmethodID constructor = (*env)->GetMethodID(env, java_error_cls, "<init>",
+-                                                    "(Ljava/lang/String;)V");
+-        jthrowable e = try_catch_java_exceptions(env);
+-        if (e == NULL && constructor != NULL) {
+-            jstring java_message = jni_string_from_utf8(env, message, message_length);
+-            if (java_message == NULL) {
+-                if (original_message != NULL) {
+-                    JS_FreeCString(context, original_message);
+-                }
+-                if (original_name != NULL) {
+-                    JS_FreeCString(context, original_name);
+-                }
+-                JS_FreeValue(context, js_name);
+-                JS_FreeValue(context, js_message);
+-                (*env)->DeleteLocalRef(env, java_error_cls);
+-                free(stack);
+-                return NULL;
+-            }
+-            jthrowable java_error = (*env)->NewObject(env, java_error_cls, constructor,
+-                                                      java_message);
+-            (*env)->DeleteLocalRef(env, java_message);
+-            if (original_message != NULL) {
+-                JS_FreeCString(context, original_message);
+-            }
+-            if (original_name != NULL) {
+-                JS_FreeCString(context, original_name);
+-            }
+-            JS_FreeValue(context, js_name);
+-            JS_FreeValue(context, js_message);
+-            (*env)->DeleteLocalRef(env, java_error_cls);
+-            free(stack);
+-            return java_error;
+-        } else if (e != NULL) {
+-            (*env)->DeleteLocalRef(env, e);
+-        }
+-    }
+-
+-    size_t full_message_length = 0;
+-    char *full_message = js_error_message_join(
+-            name,
+-            name_length,
+-            message,
+-            message_length,
+-            stack,
+-            java_error_cls == NULL,
+-            &full_message_length);
+-
+-    // Fallback to the default error class
+-    const char *fallback_message = full_message != NULL ? full_message : message;
+-    size_t fallback_message_length = full_message != NULL
+-                                     ? full_message_length
+-                                     : message_length;
++    js_error_to_string(context, error, &message, &message_length, &stack);
++    const char *fallback_message = message != NULL ? message : "<UNSUPPORTED_ERROR>";
++    size_t fallback_message_length = message != NULL
++                                     ? message_length
++                                     : sizeof("<UNSUPPORTED_ERROR>") - 1;
+     jthrowable java_error = new_js_error_exception(
+             env,
+             context,
+@@ -144,18 +32,7 @@ jthrowable js_error_to_java_error(JNIEnv *env, JSContext *context, JSValue error
+             fallback_message,
+             fallback_message_length,
+             stack);
+-    if (original_message != NULL) {
+-        JS_FreeCString(context, original_message);
+-    }
+-    if (original_name != NULL) {
+-        JS_FreeCString(context, original_name);
+-    }
+-    JS_FreeValue(context, js_name);
+-    JS_FreeValue(context, js_message);
+-    if (java_error_cls != NULL) {
+-        (*env)->DeleteLocalRef(env, java_error_cls);
+-    }
+-    free(full_message);
++    free(message);
+     free(stack);
+     return java_error;
+ }
