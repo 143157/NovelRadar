@@ -37,6 +37,14 @@ class ChapterCleanerTest {
         )
     }
 
+    @Test fun preservesSpacesAroundInlineElements() {
+        val html = "<p>foo <em>bar</em> baz</p><p><span>one</span> <span>two</span></p>"
+
+        assertThat(cleaner.clean(html, ChapterRuleDto())).isEqualTo(
+            SourceResult.Success("foo bar baz\none two")
+        )
+    }
+
     @Test fun invalidFilterSelectorIsTypedFailure() {
         val result = cleaner.clean("<p>正文</p>", ChapterRuleDto(filterTag = "div["))
 

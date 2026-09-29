@@ -55,4 +55,23 @@ class ChapterPageParserTest {
 
         assertThat((result as SourceResult.Success).value.nextPageUrl).isNull()
     }
+
+    @Test fun nextPageScriptTransformsRawHrefBeforeResolution() = runBlocking {
+        val parser = ChapterPageParser(HtmlSelector(), object : ScriptExecutor {
+            override suspend fun transform(input: String, script: String): SourceResult<String> {
+                assertThat(input).isEqualTo("../2.html")
+                assertThat(script).isEqualTo("r=r.replace('2.html','3.html')")
+                return SourceResult.Success(input.replace("2.html", "3.html"))
+            }
+        })
+        val rule = ChapterRuleDto(
+            title = ".title", content = "#content",
+            nextPage = "a.next@js:r=r.replace('2.html','3.html')", pagination = true,
+        )
+
+        val result = parser.parse(page, "https://books.example.test/c/1.html", rule)
+
+        assertThat((result as SourceResult.Success).value.nextPageUrl)
+            .isEqualTo("https://books.example.test/3.html")
+    }
 }

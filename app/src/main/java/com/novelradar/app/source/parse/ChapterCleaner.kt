@@ -51,8 +51,8 @@ class ChapterCleaner {
                 val text = node.wholeText
                     .replace('\u00a0', ' ')
                     .replace(Regex("\\s+"), " ")
-                    .trim()
-                if (text.isNotEmpty()) out.append(text)
+                // A space between inline siblings is content, but indentation at a line start is not.
+                if (text.isNotEmpty()) out.append(if (out.isEmpty() || out.last() == '\n') text.trimStart() else text)
             }
             is Element -> {
                 if (node.normalName() == "br") {

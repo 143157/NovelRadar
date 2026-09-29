@@ -33,15 +33,16 @@ class SourceEngineTest {
         server.dispatcher = routing { request ->
             when (request.requestUrl?.encodedPath) {
                 "/search" -> html("<div class=result><a class=name href='/book/7'>星河旅人</a><span class=author>叶子</span></div>")
-                "/book/7" -> html("<h1 id=title>星河旅人</h1><div id=intro>穿越群星的故事</div>")
-                "/toc/7" -> html("<div id=chapters><a href='/chapter/1'>第一章</a></div>")
-                "/chapter/1" -> html("<h1>第一章</h1><div id=content><p>第一段</p><p>第二段</p></div>")
+                "/book/7" -> html("<meta property='og:image' content='/cover/7.jpg'><h1 id=title>星河旅人</h1><div id=intro>穿越群星的故事</div>")
+                "/toc/7" -> html("<div id=chapters><a href='/chapter/1'>第一章</a><a href='/chapter/1'>重复章节</a></div>")
+                "/chapter/1" -> html("<h1>第一章</h1><div id=content><p>第一段【过滤】</p><div class=ad>广告</div><p>第二段</p></div>")
                 else -> MockResponse().setResponseCode(404)
             }
         }
         val rule = rule(server).copy(
-            book = BookRuleDto(url = ".*/book/(\\d+)", bookName = "#title", intro = "#intro"),
+            book = BookRuleDto(url = ".*/book/(\\d+)", bookName = "#title", intro = "#intro", coverUrl = "meta[property=og:image]"),
             toc = TocRuleDto(url = server.url("/toc/%s").toString(), item = "#chapters a"),
+            chapter = ChapterRuleDto(title = "h1", content = "#content", filterTag = ".ad", filterTxt = "【过滤】"),
         )
         val engine = engine()
 
@@ -51,11 +52,16 @@ class SourceEngineTest {
             val book = (engine.book(rule, "source-1", hit, "book-7", allowCleartext = true) as SourceResult.Success).value
             assertThat(book.bookId).isEqualTo("book-7")
             assertThat(book.introduction).isEqualTo("穿越群星的故事")
-            val chapter = (engine.toc(rule, "source-1", hit, "book-7", allowCleartext = true) as SourceResult.Success).value.single()
+            assertThat(book.coverUrl).isEqualTo(server.url("/cover/7.jpg").toString())
+            val chapters = (engine.toc(rule, "source-1", hit, "book-7", allowCleartext = true) as SourceResult.Success).value
+            assertThat(chapters).hasSize(1)
+            val chapter = chapters.single()
             assertThat(chapter.title).isEqualTo("第一章")
             val page = (engine.chapter(rule, "source-1", chapter.url!!, allowCleartext = true) as SourceResult.Success).value
             assertThat(page.title).isEqualTo("第一章")
             assertThat(page.content).isEqualTo("第一段\n第二段")
+            assertThat(page.content).doesNotContain("广告")
+            assertThat(page.content).doesNotContain("【过滤】")
         } }
         assertThat(server.requestCount).isEqualTo(4)
     }

@@ -38,12 +38,19 @@ class ChapterPageParser(
         if (content.isBlank()) return SourceResult.Failure(SourceFailure.Parse("chapter.content", contentSelector))
 
         val nextPage = if (rule.pagination && !rule.nextPage.isNullOrBlank()) {
-            try {
-                selector.elements(document, rule.nextPage).firstOrNull()?.let { node ->
-                    node.absUrl("href").ifBlank { node.absUrl("value") }.ifBlank { null }
-                }
+            val expression = SelectorExpression.parse(rule.nextPage)
+            val node = try {
+                selector.elements(document, expression.selector).firstOrNull()
             } catch (_: Selector.SelectorParseException) {
                 return SourceResult.Failure(SourceFailure.Parse("chapter.nextPage", rule.nextPage))
+            }
+            val raw = node?.attr("href")?.ifBlank { node.attr("value") }?.takeIf(String::isNotBlank)
+            if (raw == null) null else {
+                val transformed = if (expression.script == null) raw else when (val result = scripts.transform(raw, expression.script)) {
+                    is SourceResult.Success -> result.value
+                    is SourceResult.Failure -> return result
+                }
+                resolveRuleUrl(baseUrl, transformed)
             }
         } else null
         return SourceResult.Success(ChapterPage(title, content, nextPage))
