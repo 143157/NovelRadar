@@ -37,6 +37,7 @@ class TocPageParser(
         val expression = SelectorExpression.parse(itemExpression)
         val seenUrls = hashSetOf<String>()
         val chapters = mutableListOf<Chapter>()
+        var savedFieldBytes = 0L
         for (node in nodes) {
             val title = node.text().trim()
             val rawUrl = when (node.normalName()) {
@@ -57,6 +58,11 @@ class TocPageParser(
             if (chapters.size >= SourceLimits.MAX_TOC_CHAPTERS) {
                 return SourceResult.Failure(SourceFailure.UnsafeRule("TOC page exceeds ${SourceLimits.MAX_TOC_CHAPTERS} chapters"))
             }
+            val addedBytes = SourceLimits.utf8Bytes(title) + SourceLimits.utf8Bytes(url)
+            if (savedFieldBytes + addedBytes > SourceLimits.MAX_TOC_FIELDS_BYTES) {
+                return SourceResult.Failure(SourceFailure.UnsafeRule("TOC page fields exceed ${SourceLimits.MAX_TOC_FIELDS_BYTES} UTF-8 bytes"))
+            }
+            savedFieldBytes += addedBytes
             seenUrls.add(url)
             chapters += Chapter(
                 bookId = bookId,

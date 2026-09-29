@@ -120,4 +120,47 @@ class TocPageParserTest {
 
         assertThat((result as SourceResult.Success).value.single().url).hasLength(4_096)
     }
+
+    @Test fun stopsBeforeMaterializingSixteenMiBOfScriptExpandedUrls() = runBlocking {
+        val page = buildString {
+            append("<div id=chapters>")
+            repeat(4_400) { index -> append("<a href='/c/$index'>章</a>") }
+            append("</div>")
+        }
+        var transformed = 0
+        val bounded = TocPageParser(HtmlSelector(), object : ScriptExecutor {
+            override suspend fun transform(input: String, script: String): SourceResult<String> {
+                transformed++
+                return SourceResult.Success("$input/${"x".repeat(3_900)}")
+            }
+        })
+
+        val result = bounded.parse(page, baseUrl, "source-1", "book-7", TocRuleDto(item = "#chapters a@js:expand"))
+
+        assertThat((result as SourceResult.Failure).error).isInstanceOf(SourceFailure.UnsafeRule::class.java)
+        assertThat(transformed).isLessThan(4_400)
+    }
+
+    @Test fun acceptsExactlySixteenMiBAndDoesNotCountDuplicateUrl() = runBlocking {
+        val title = "a".repeat(196)
+        val page = buildString {
+            append("<div id=chapters>")
+            repeat(4_096) { index ->
+                val id = index.toString().padStart(4, '0')
+                append("<a href='/c/$id'>$title</a>")
+            }
+            append("<a href='/c/0000'>重复章节</a></div>")
+        }
+        val bounded = TocPageParser(HtmlSelector(), object : ScriptExecutor {
+            override suspend fun transform(input: String, script: String): SourceResult<String> {
+                val suffixLength = 3_900 - "https://books.example.test$input/".length
+                return SourceResult.Success("$input/${"x".repeat(suffixLength)}")
+            }
+        })
+
+        val result = bounded.parse(page, baseUrl, "source-1", "book-7", TocRuleDto(item = "#chapters a@js:expand"))
+
+        assertThat((result as SourceResult.Success).value).hasSize(4_096)
+        assertThat(result.value.first().url).hasLength(3_900)
+    }
 }
