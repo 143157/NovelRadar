@@ -17,6 +17,7 @@ import com.novelradar.app.source.parse.ChapterPageParser
 import com.novelradar.app.source.parse.HtmlSelector
 import com.novelradar.app.source.parse.SearchPageParser
 import com.novelradar.app.source.parse.SelectorExpression
+import com.novelradar.app.source.parse.SourceLimits
 import com.novelradar.app.source.parse.TocPageParser
 import com.novelradar.app.source.parse.resolveRuleUrl
 import com.novelradar.app.source.rule.BookRuleDto
@@ -57,6 +58,7 @@ class SourceEngine(
         val visited = hashSetOf<String>()
         val parsedFinalUrls = hashSetOf<String>()
         val hits = linkedMapOf<String, SearchHit>()
+        var savedFieldBytes = 0L
         repeat(MAX_SEARCH_PAGES) { pageIndex ->
             if (!visited.add(request.url.toString())) return SourceResult.Success(hits.values.toList())
             val page = when (val fetched = http.execute(
@@ -78,7 +80,12 @@ class SourceEngine(
             }
             for (hit in parsedHits) {
                 if (hit.detailUrl !in hits) {
-                    if (hits.size >= MAX_SEARCH_HITS) return unsafe("search exceeds $MAX_SEARCH_HITS distinct hits")
+                    if (hits.size >= SourceLimits.MAX_SEARCH_HITS) return unsafe("search exceeds ${SourceLimits.MAX_SEARCH_HITS} distinct hits")
+                    val addedBytes = SourceLimits.searchFieldBytes(hit)
+                    if (savedFieldBytes + addedBytes > SourceLimits.MAX_SEARCH_FIELDS_BYTES) {
+                        return unsafe("search fields exceed ${SourceLimits.MAX_SEARCH_FIELDS_BYTES} UTF-8 bytes")
+                    }
+                    savedFieldBytes += addedBytes
                     hits[hit.detailUrl] = hit
                 }
             }
@@ -135,6 +142,7 @@ class SourceEngine(
         val visitedPages = hashSetOf<String>()
         val parsedFinalUrls = hashSetOf<String>()
         val chapters = linkedMapOf<String, Chapter>()
+        var savedFieldBytes = 0L
         repeat(MAX_TOC_PAGES) {
             if (!visitedPages.add(url)) return SourceResult.Success(orderedChapters(chapters.values.toList(), tocRule.isDesc))
             val page = when (val fetched = getPage(sourceId, url, allowCleartext)) {
@@ -156,7 +164,12 @@ class SourceEngine(
             for (chapter in parsedChapters) {
                 val chapterUrl = chapter.url ?: continue
                 if (chapterUrl !in chapters) {
-                    if (chapters.size >= MAX_TOC_CHAPTERS) return unsafe("TOC exceeds $MAX_TOC_CHAPTERS distinct chapters")
+                    if (chapters.size >= SourceLimits.MAX_TOC_CHAPTERS) return unsafe("TOC exceeds ${SourceLimits.MAX_TOC_CHAPTERS} distinct chapters")
+                    val addedBytes = SourceLimits.utf8Bytes(chapter.title) + SourceLimits.utf8Bytes(chapterUrl)
+                    if (savedFieldBytes + addedBytes > SourceLimits.MAX_TOC_FIELDS_BYTES) {
+                        return unsafe("TOC fields exceed ${SourceLimits.MAX_TOC_FIELDS_BYTES} UTF-8 bytes")
+                    }
+                    savedFieldBytes += addedBytes
                     chapters[chapterUrl] = chapter
                 }
             }
@@ -232,7 +245,7 @@ class SourceEngine(
     }
 
     private fun getRequest(url: String, allowCleartext: Boolean): Request? {
-        if (url.length > MAX_URL_CHARS || !HttpPolicy.isAllowed(url, allowCleartext)) return null
+        if (url.length > SourceLimits.MAX_URL_CHARS || !HttpPolicy.isAllowed(url, allowCleartext)) return null
         return try { Request.Builder().url(url).get().build() } catch (_: IllegalArgumentException) { null }
     }
 
@@ -317,10 +330,7 @@ class SourceEngine(
         const val MAX_SEARCH_PAGES = 10
         const val MAX_TOC_PAGES = 100
         const val MAX_CHAPTER_PAGES = 20
-        const val MAX_SEARCH_HITS = 10_000
-        const val MAX_TOC_CHAPTERS = 20_000
         const val MAX_CHAPTER_CONTENT_BYTES = 8L * 1024 * 1024
-        const val MAX_URL_CHARS = 4096
         val LOCAL_ID = Regex("[A-Za-z0-9._-]+")
         val CHARSET_PATTERN = Regex("charset\\s*=\\s*['\\\"]?([A-Za-z0-9._-]+)", RegexOption.IGNORE_CASE)
     }

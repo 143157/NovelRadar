@@ -83,4 +83,41 @@ class TocPageParserTest {
 
         assertThat(result).isEqualTo(SourceResult.Failure(SourceFailure.Parse("toc.item", ".absent")))
     }
+
+    @Test fun stopsMaterializingAfterTwentyThousandChaptersWithoutScanningLaterItems() = runBlocking {
+        val page = buildString {
+            append("<div id=chapters>")
+            repeat(20_002) { index -> append("<a href='/c/$index'>章</a>") }
+            append("</div>")
+        }
+        var transformed = 0
+        val bounded = TocPageParser(HtmlSelector(), object : ScriptExecutor {
+            override suspend fun transform(input: String, script: String): SourceResult<String> {
+                transformed++
+                return SourceResult.Success(input)
+            }
+        })
+
+        val result = bounded.parse(page, baseUrl, "source-1", "book-7", TocRuleDto(item = "#chapters a@js:r"))
+
+        assertThat((result as SourceResult.Failure).error).isInstanceOf(SourceFailure.UnsafeRule::class.java)
+        assertThat(transformed).isEqualTo(20_001)
+    }
+
+    @Test fun rejectsChapterUrlLongerThanRequestLimit() = runBlocking {
+        val page = "<div id=chapters><a href='/${"x".repeat(4_096)}'>章</a></div>"
+
+        val result = parser.parse(page, baseUrl, "source-1", "book-7", TocRuleDto(item = "#chapters a"))
+
+        assertThat((result as SourceResult.Failure).error).isInstanceOf(SourceFailure.UnsafeRule::class.java)
+    }
+
+    @Test fun acceptsChapterUrlAtExactlyRequestLimit() = runBlocking {
+        val href = "/" + "x".repeat(4_096 - "https://books.example.test/".length)
+        val page = "<div id=chapters><a href='$href'>章</a></div>"
+
+        val result = parser.parse(page, baseUrl, "source-1", "book-7", TocRuleDto(item = "#chapters a"))
+
+        assertThat((result as SourceResult.Success).value.single().url).hasLength(4_096)
+    }
 }

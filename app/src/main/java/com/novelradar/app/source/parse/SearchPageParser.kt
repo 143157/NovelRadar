@@ -31,7 +31,8 @@ class SearchPageParser(
         }
         if (rows.isEmpty()) return SourceResult.Success(emptyList())
 
-        val hits = mutableListOf<SearchHit>()
+        val hits = linkedMapOf<String, SearchHit>()
+        var savedFieldBytes = 0L
         var firstRowFailure: SourceFailure.Parse? = null
         for (row in rows) {
             val name = when (val read = extractRuleText(row, nameExpression, "search.bookName", selector, scripts, required = true)) {
@@ -53,6 +54,13 @@ class SearchPageParser(
                 if (firstRowFailure == null) firstRowFailure = SourceFailure.Parse("search.bookName", nameExpression)
                 continue
             }
+            if (detailUrl.length > SourceLimits.MAX_URL_CHARS) {
+                return SourceResult.Failure(SourceFailure.UnsafeRule("search detail URL exceeds ${SourceLimits.MAX_URL_CHARS} characters"))
+            }
+            if (detailUrl in hits) continue
+            if (hits.size >= SourceLimits.MAX_SEARCH_HITS) {
+                return SourceResult.Failure(SourceFailure.UnsafeRule("search page exceeds ${SourceLimits.MAX_SEARCH_HITS} distinct hits"))
+            }
             val author = when (val read = extractRuleText(row, rule.author, "search.author", selector, scripts)) {
                 is SourceResult.Success -> read.value.orEmpty()
                 is SourceResult.Failure -> return read
@@ -65,7 +73,7 @@ class SearchPageParser(
                 is SourceResult.Success -> read.value
                 is SourceResult.Failure -> return read
             }
-            hits += SearchHit(
+            val hit = SearchHit(
                 sourceId = sourceId,
                 bookName = name,
                 author = author,
@@ -73,11 +81,17 @@ class SearchPageParser(
                 latestChapter = latest,
                 updatedAtText = updated,
             )
+            val addedBytes = SourceLimits.searchFieldBytes(hit)
+            if (savedFieldBytes + addedBytes > SourceLimits.MAX_SEARCH_FIELDS_BYTES) {
+                return SourceResult.Failure(SourceFailure.UnsafeRule("search page fields exceed ${SourceLimits.MAX_SEARCH_FIELDS_BYTES} UTF-8 bytes"))
+            }
+            savedFieldBytes += addedBytes
+            hits[detailUrl] = hit
         }
         return if (hits.isEmpty()) {
             SourceResult.Failure(firstRowFailure ?: SourceFailure.Parse("search.bookName", nameExpression))
         } else {
-            SourceResult.Success(hits)
+            SourceResult.Success(hits.values.toList())
         }
     }
 }

@@ -172,6 +172,53 @@ class SourceEngineTest {
         assertThat((result as SourceResult.Success).value).hasSize(10_000)
     }
 
+    @Test fun searchRejectsMoreThanEightMiBOfSavedFieldsAcrossPages() = withServer { server ->
+        val longName = "中".repeat(580_000)
+        val scripts = object : ScriptExecutor {
+            override suspend fun transform(input: String, script: String): SourceResult<String> = SourceResult.Success(longName)
+        }
+        server.dispatcher = routing { request ->
+            val page = request.requestUrl!!.queryParameter("p")!!.toInt()
+            val next = if (page < 5) "<a class=next href='/search?q=x&p=${page + 1}'>下一页</a>" else ""
+            html("<div class=result><a class=name href='/book/$page'>书</a></div>$next")
+        }
+        val search = rule(server).search!!.copy(
+            url = server.url("/search?q=%s&p=1").toString(), bookName = ".name@js:inflate",
+            pagination = true, nextPage = "a.next",
+        )
+
+        val result = runBlocking { withTimeout(60_000) {
+            engine(scripts).search(rule(server).copy(search = search), "source-1", "x", allowCleartext = true)
+        } }
+
+        assertThat((result as SourceResult.Failure).error).isInstanceOf(SourceFailure.UnsafeRule::class.java)
+    }
+
+    @Test fun searchAllowsExactlyEightMiBOfSavedFieldsPlusCrossPageDuplicate() = withServer { server ->
+        val urlBytes = server.url("/book/1").toString().toByteArray(Charsets.UTF_8).size
+        val longName = "a".repeat(1_048_576 - urlBytes)
+        val scripts = object : ScriptExecutor {
+            override suspend fun transform(input: String, script: String): SourceResult<String> = SourceResult.Success(longName)
+        }
+        server.dispatcher = routing { request ->
+            val page = request.requestUrl!!.queryParameter("p")!!.toInt()
+            val book = if (page == 9) 1 else page
+            val next = if (page < 9) "<a class=next href='/search?q=x&p=${page + 1}'>下一页</a>" else ""
+            html("<div class=result><a class=name href='/book/$book'>书</a></div>$next")
+        }
+        val search = rule(server).search!!.copy(
+            url = server.url("/search?q=%s&p=1").toString(), bookName = ".name@js:inflate",
+            pagination = true, nextPage = "a.next",
+        )
+
+        val result = runBlocking { withTimeout(60_000) {
+            engine(scripts).search(rule(server).copy(search = search), "source-1", "x", allowCleartext = true)
+        } }
+
+        assertThat((result as SourceResult.Success).value).hasSize(8)
+        assertThat(server.requestCount).isEqualTo(9)
+    }
+
     @Test fun tocRejectsMoreThanTwentyThousandDistinctChapters() = withServer { server ->
         val links = buildString {
             append("<div id=chapters>")
@@ -200,6 +247,47 @@ class SourceEngineTest {
         } }
 
         assertThat((result as SourceResult.Success).value).hasSize(20_000)
+    }
+
+    @Test fun tocRejectsMoreThanSixteenMiBOfSavedTitlesAndUrlsAcrossPages() = withServer { server ->
+        val longTitle = "中".repeat(580_000)
+        server.dispatcher = routing { request ->
+            val page = request.requestUrl!!.queryParameter("p")!!.toInt()
+            val next = if (page < 10) "<a class=next href='/toc?p=${page + 1}'>下一页</a>" else ""
+            html("<div id=chapters><a href='/chapter/$page'>$longTitle</a></div>$next")
+        }
+        val toc = TocRuleDto(
+            url = server.url("/toc?p=1").toString(), item = "#chapters a",
+            pagination = true, nextPage = "a.next",
+        )
+
+        val result = runBlocking { withTimeout(120_000) {
+            engine().toc(rule(server).copy(toc = toc), "source-1", hit(server), "book-7", allowCleartext = true)
+        } }
+
+        assertThat((result as SourceResult.Failure).error).isInstanceOf(SourceFailure.UnsafeRule::class.java)
+    }
+
+    @Test fun tocAllowsExactlySixteenMiBOfSavedFieldsPlusCrossPageDuplicate() = withServer { server ->
+        server.dispatcher = routing { request ->
+            val page = request.requestUrl!!.queryParameter("p")!!.toInt()
+            val chapter = if (page == 17) 1 else page
+            val urlBytes = server.url("/chapter/$chapter").toString().toByteArray(Charsets.UTF_8).size
+            val title = "a".repeat(1_048_576 - urlBytes)
+            val next = if (page < 17) "<a class=next href='/toc?p=${page + 1}'>下一页</a>" else ""
+            html("<div id=chapters><a href='/chapter/$chapter'>$title</a></div>$next")
+        }
+        val toc = TocRuleDto(
+            url = server.url("/toc?p=1").toString(), item = "#chapters a",
+            pagination = true, nextPage = "a.next",
+        )
+
+        val result = runBlocking { withTimeout(120_000) {
+            engine().toc(rule(server).copy(toc = toc), "source-1", hit(server), "book-7", allowCleartext = true)
+        } }
+
+        assertThat((result as SourceResult.Success).value).hasSize(16)
+        assertThat(server.requestCount).isEqualTo(17)
     }
 
     @Test fun chapterRejectsAggregatedUtf8ContentOverEightMiB() = withServer { server ->
@@ -346,12 +434,10 @@ class SourceEngineTest {
         assertThat(server.requestCount).isEqualTo(0)
     }
 
-    private fun engine(): SourceEngine {
+    private fun engine(scripts: ScriptExecutor = object : ScriptExecutor {
+        override suspend fun transform(input: String, script: String): SourceResult<String> = SourceResult.Success(input)
+    }): SourceEngine {
         val selector = HtmlSelector()
-        val scripts = object : ScriptExecutor {
-            override suspend fun transform(input: String, script: String): SourceResult<String> =
-                SourceResult.Success(input)
-        }
         return SourceEngine(
             SearchRequestFactory(), SourceHttpClient(),
             SearchPageParser(selector, scripts), BookPageParser(selector, scripts),

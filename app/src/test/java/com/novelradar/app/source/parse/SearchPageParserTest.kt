@@ -59,6 +59,60 @@ class SearchPageParserTest {
         assertThat(result).isEqualTo(SourceResult.Failure(SourceFailure.UnsafeRule("bad script")))
     }
 
+    @Test fun stopsMaterializingAfterTenThousandHitsWithoutScanningLaterRows() = runBlocking {
+        val page = buildString {
+            repeat(10_002) { index -> append("<div class=result><a class=name href='/b/$index'>书</a></div>") }
+        }
+        var transformed = 0
+        val bounded = SearchPageParser(HtmlSelector(), object : ScriptExecutor {
+            override suspend fun transform(input: String, script: String): SourceResult<String> {
+                transformed++
+                return SourceResult.Success(input)
+            }
+        })
+
+        val result = bounded.parse(page, baseUrl, "source-1", rule().copy(bookName = ".name@js:r"))
+
+        assertThat((result as SourceResult.Failure).error).isInstanceOf(SourceFailure.UnsafeRule::class.java)
+        assertThat(transformed).isEqualTo(10_001)
+    }
+
+    @Test fun stopsMaterializingWhenScriptedFieldsExceedEightMiB() = runBlocking {
+        val page = buildString {
+            repeat(4) { index -> append("<div class=result><a class=name href='/b/$index'>书</a></div>") }
+        }
+        val longName = "中".repeat(1_300_000)
+        var transformed = 0
+        val bounded = SearchPageParser(HtmlSelector(), object : ScriptExecutor {
+            override suspend fun transform(input: String, script: String): SourceResult<String> {
+                transformed++
+                return SourceResult.Success(longName)
+            }
+        })
+
+        val result = bounded.parse(page, baseUrl, "source-1", rule().copy(bookName = ".name@js:inflate"))
+
+        assertThat((result as SourceResult.Failure).error).isInstanceOf(SourceFailure.UnsafeRule::class.java)
+        assertThat(transformed).isEqualTo(3)
+    }
+
+    @Test fun rejectsDetailUrlLongerThanRequestLimit() = runBlocking {
+        val page = "<div class=result><a class=name href='/${"x".repeat(4_096)}'>书</a></div>"
+
+        val result = parser.parse(page, baseUrl, "source-1", rule())
+
+        assertThat((result as SourceResult.Failure).error).isInstanceOf(SourceFailure.UnsafeRule::class.java)
+    }
+
+    @Test fun acceptsDetailUrlAtExactlyRequestLimit() = runBlocking {
+        val href = "/" + "x".repeat(4_096 - "https://books.example.test/".length)
+        val page = "<div class=result><a class=name href='$href'>书</a></div>"
+
+        val result = parser.parse(page, baseUrl, "source-1", rule())
+
+        assertThat((result as SourceResult.Success).value.single().detailUrl).hasLength(4_096)
+    }
+
     private fun rule() = SearchRuleDto(
         result = ".result",
         bookName = ".name",

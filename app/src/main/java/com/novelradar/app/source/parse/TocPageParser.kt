@@ -50,7 +50,14 @@ class TocPageParser(
                 is SourceResult.Failure -> return result
             }
             val url = resolveRuleUrl(baseUrl, transformedUrl) ?: continue
-            if (!seenUrls.add(url)) continue
+            if (url.length > SourceLimits.MAX_URL_CHARS) {
+                return SourceResult.Failure(SourceFailure.UnsafeRule("TOC chapter URL exceeds ${SourceLimits.MAX_URL_CHARS} characters"))
+            }
+            if (url in seenUrls) continue
+            if (chapters.size >= SourceLimits.MAX_TOC_CHAPTERS) {
+                return SourceResult.Failure(SourceFailure.UnsafeRule("TOC page exceeds ${SourceLimits.MAX_TOC_CHAPTERS} chapters"))
+            }
+            seenUrls.add(url)
             chapters += Chapter(
                 bookId = bookId,
                 sourceId = sourceId,
