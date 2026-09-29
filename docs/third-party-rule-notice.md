@@ -1,6 +1,6 @@
 # 第三方书源规则声明
 
-内置文件 `app/src/main/assets/sources/main.json` 的 12 条站点规则，移植自用户提供的 SoNovel 发行包 `SoNovel/rules/main.json`。上游项目为 [freeok/so-novel](https://github.com/freeok/so-novel)，其 [规则集说明](https://github.com/freeok/so-novel/blob/main/BOOK_SOURCES.md) 和 [规则文件](https://github.com/freeok/so-novel/blob/main/bundle/rules/main.json) 可供追溯。上游仓库标注 [AGPL-3.0 许可](https://github.com/freeok/so-novel/blob/main/LICENSE)；原规则的站点名称、备注和选择器署名归原贡献者。
+内置文件 `app/src/main/assets/sources/main.json` 的 12 条站点规则，移植自用户提供的 `D:\Download\sonovel小说下载工具\SoNovel\SoNovel\rules\main.json`。该原始文件 SHA-256 为 `EA291C2A93BB2CD2F8D085ACCD3FA46FCBF53C406DB369F3704EF693E8330499`，可据此核对具体输入。上游项目为 [freeok/so-novel](https://github.com/freeok/so-novel)，其 [规则集说明](https://github.com/freeok/so-novel/blob/main/BOOK_SOURCES.md) 和 [当前规则文件](https://github.com/freeok/so-novel/blob/main/bundle/rules/main.json) 可供追溯；`main` 分支持续变化，尚未确认用户文件对应的发行版本或提交，不应把当前上游文件视为完全相同的版本。上游仓库标注 [AGPL-3.0 许可](https://github.com/freeok/so-novel/blob/main/LICENSE)；移植时保留原规则的名称与备注。
 
 本次移植只对规则数据做了以下变更：
 
