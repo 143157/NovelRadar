@@ -55,6 +55,7 @@ class SourceEngine(
             is SourceResult.Failure -> return built
         }
         val visited = hashSetOf<String>()
+        val parsedFinalUrls = hashSetOf<String>()
         val hits = linkedMapOf<String, SearchHit>()
         repeat(MAX_SEARCH_PAGES) { pageIndex ->
             if (!visited.add(request.url.toString())) return SourceResult.Success(hits.values.toList())
@@ -65,14 +66,21 @@ class SourceEngine(
                 is SourceResult.Success -> fetched.value
                 is SourceResult.Failure -> return fetched
             }
+            if (!parsedFinalUrls.add(page.finalUrl)) return SourceResult.Success(hits.values.toList())
             visited.add(page.finalUrl)
             val html = when (val decoded = decode(page)) {
                 is SourceResult.Success -> decoded.value
                 is SourceResult.Failure -> return decoded
             }
-            when (val parsed = searchParser.parse(html, page.finalUrl, sourceId, searchRule)) {
-                is SourceResult.Success -> parsed.value.forEach { hits.putIfAbsent(it.detailUrl, it) }
+            val parsedHits = when (val parsed = searchParser.parse(html, page.finalUrl, sourceId, searchRule)) {
+                is SourceResult.Success -> parsed.value
                 is SourceResult.Failure -> return parsed
+            }
+            for (hit in parsedHits) {
+                if (hit.detailUrl !in hits) {
+                    if (hits.size >= MAX_SEARCH_HITS) return unsafe("search exceeds $MAX_SEARCH_HITS distinct hits")
+                    hits[hit.detailUrl] = hit
+                }
             }
             if (!searchRule.pagination || searchRule.nextPage.isNullOrBlank()) return SourceResult.Success(hits.values.toList())
             val next = when (val extracted = nextPage(html, page.finalUrl, searchRule.nextPage, "search.nextPage", visited)) {
@@ -125,6 +133,7 @@ class SourceEngine(
 
         var url = initialUrl
         val visitedPages = hashSetOf<String>()
+        val parsedFinalUrls = hashSetOf<String>()
         val chapters = linkedMapOf<String, Chapter>()
         repeat(MAX_TOC_PAGES) {
             if (!visitedPages.add(url)) return SourceResult.Success(orderedChapters(chapters.values.toList(), tocRule.isDesc))
@@ -132,16 +141,24 @@ class SourceEngine(
                 is SourceResult.Success -> fetched.value
                 is SourceResult.Failure -> return fetched
             }
+            if (!parsedFinalUrls.add(page.finalUrl)) {
+                return SourceResult.Success(orderedChapters(chapters.values.toList(), tocRule.isDesc))
+            }
             visitedPages.add(page.finalUrl)
             val html = when (val decoded = decode(page)) {
                 is SourceResult.Success -> decoded.value
                 is SourceResult.Failure -> return decoded
             }
-            when (val parsed = tocParser.parse(html, linkBase ?: page.finalUrl, sourceId, bookId, tocRule)) {
-                is SourceResult.Success -> parsed.value.forEach { chapter ->
-                    chapter.url?.let { chapters.putIfAbsent(it, chapter) }
-                }
+            val parsedChapters = when (val parsed = tocParser.parse(html, linkBase ?: page.finalUrl, sourceId, bookId, tocRule)) {
+                is SourceResult.Success -> parsed.value
                 is SourceResult.Failure -> return parsed
+            }
+            for (chapter in parsedChapters) {
+                val chapterUrl = chapter.url ?: continue
+                if (chapterUrl !in chapters) {
+                    if (chapters.size >= MAX_TOC_CHAPTERS) return unsafe("TOC exceeds $MAX_TOC_CHAPTERS distinct chapters")
+                    chapters[chapterUrl] = chapter
+                }
             }
             if (!tocRule.pagination || tocRule.nextPage.isNullOrBlank()) {
                 return SourceResult.Success(orderedChapters(chapters.values.toList(), tocRule.isDesc))
@@ -164,7 +181,9 @@ class SourceEngine(
         if (rule.disabled) return unsafe("source is disabled")
         val chapterRule = rule.chapter ?: return unsafe("source has no chapter rule")
         val visited = hashSetOf<String>()
+        val parsedFinalUrls = hashSetOf<String>()
         val parts = mutableListOf<String>()
+        var contentBytes = 0L
         var url = chapterUrl
         var title: String? = null
         repeat(MAX_CHAPTER_PAGES) {
@@ -172,6 +191,9 @@ class SourceEngine(
             val page = when (val fetched = getPage(sourceId, url, allowCleartext)) {
                 is SourceResult.Success -> fetched.value
                 is SourceResult.Failure -> return fetched
+            }
+            if (!parsedFinalUrls.add(page.finalUrl)) {
+                return SourceResult.Success(ChapterPage(title.orEmpty(), parts.joinToString("\n\n")))
             }
             visited.add(page.finalUrl)
             val html = when (val decoded = decode(page)) {
@@ -183,6 +205,11 @@ class SourceEngine(
                 is SourceResult.Failure -> return result
             }
             if (title == null) title = parsed.title
+            val additionalBytes = parsed.content.toByteArray(Charsets.UTF_8).size.toLong() + if (parts.isEmpty()) 0 else 2
+            if (contentBytes + additionalBytes > MAX_CHAPTER_CONTENT_BYTES) {
+                return unsafe("chapter content exceeds $MAX_CHAPTER_CONTENT_BYTES UTF-8 bytes")
+            }
+            contentBytes += additionalBytes
             parts += parsed.content
             if (!chapterRule.pagination || parsed.nextPageUrl == null || parsed.nextPageUrl in visited) {
                 return SourceResult.Success(ChapterPage(title.orEmpty(), parts.joinToString("\n\n")))
@@ -290,6 +317,9 @@ class SourceEngine(
         const val MAX_SEARCH_PAGES = 10
         const val MAX_TOC_PAGES = 100
         const val MAX_CHAPTER_PAGES = 20
+        const val MAX_SEARCH_HITS = 10_000
+        const val MAX_TOC_CHAPTERS = 20_000
+        const val MAX_CHAPTER_CONTENT_BYTES = 8L * 1024 * 1024
         const val MAX_URL_CHARS = 4096
         val LOCAL_ID = Regex("[A-Za-z0-9._-]+")
         val CHARSET_PATTERN = Regex("charset\\s*=\\s*['\\\"]?([A-Za-z0-9._-]+)", RegexOption.IGNORE_CASE)

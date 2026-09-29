@@ -83,6 +83,161 @@ class SourceEngineTest {
         assertThat(server.requestCount).isEqualTo(10)
     }
 
+    @Test fun searchDoesNotParseAnAlreadyParsedRedirectDestination() = withServer { server ->
+        var searchResponses = 0
+        server.dispatcher = routing { request -> when (request.requestUrl?.encodedPath) {
+            "/search" -> {
+                searchResponses++
+                html("<div class=result><a class=name href='/book/$searchResponses'>书$searchResponses</a></div><a class=next href='/bounce'>下一页</a>")
+            }
+            "/bounce" -> MockResponse().setResponseCode(302).addHeader("Location", "/search?q=x")
+            else -> MockResponse().setResponseCode(404)
+        } }
+        val rule = rule(server).copy(search = rule(server).search!!.copy(pagination = true, nextPage = "a.next"))
+
+        val result = runBlocking { withTimeout(10_000) { engine().search(rule, "source-1", "x", allowCleartext = true) } }
+
+        assertThat((result as SourceResult.Success).value.map { it.bookName }).containsExactly("书1")
+        assertThat(searchResponses).isEqualTo(2)
+    }
+
+    @Test fun tocDoesNotParseAnAlreadyParsedRedirectDestination() = withServer { server ->
+        var tocResponses = 0
+        server.dispatcher = routing { request -> when (request.requestUrl?.encodedPath) {
+            "/toc" -> {
+                tocResponses++
+                html("<div id=chapters><a href='/chapter/$tocResponses'>章$tocResponses</a></div><a class=next href='/bounce'>下一页</a>")
+            }
+            "/bounce" -> MockResponse().setResponseCode(302).addHeader("Location", "/toc")
+            else -> MockResponse().setResponseCode(404)
+        } }
+        val rule = rule(server).copy(toc = TocRuleDto(
+            url = server.url("/toc").toString(), item = "#chapters a", pagination = true, nextPage = "a.next",
+        ))
+
+        val result = runBlocking { withTimeout(10_000) { engine().toc(rule, "source-1", hit(server), "book-7", allowCleartext = true) } }
+
+        assertThat((result as SourceResult.Success).value.map { it.title }).containsExactly("章1")
+        assertThat(tocResponses).isEqualTo(2)
+    }
+
+    @Test fun chapterDoesNotAppendAnAlreadyParsedRedirectDestination() = withServer { server ->
+        var chapterResponses = 0
+        server.dispatcher = routing { request -> when (request.requestUrl?.encodedPath) {
+            "/chapter" -> {
+                chapterResponses++
+                html("<h1>章节</h1><div id=content><p>正文$chapterResponses</p></div><a class=next href='/bounce'>下一页</a>")
+            }
+            "/bounce" -> MockResponse().setResponseCode(302).addHeader("Location", "/chapter")
+            else -> MockResponse().setResponseCode(404)
+        } }
+        val rule = rule(server).copy(chapter = ChapterRuleDto(
+            title = "h1", content = "#content", pagination = true, nextPage = "a.next",
+        ))
+
+        val result = runBlocking { withTimeout(10_000) {
+            engine().chapter(rule, "source-1", server.url("/chapter").toString(), allowCleartext = true)
+        } }
+
+        assertThat((result as SourceResult.Success).value.content).isEqualTo("正文1")
+        assertThat(chapterResponses).isEqualTo(2)
+    }
+
+    @Test fun searchRejectsMoreThanTenThousandDistinctHits() = withServer { server ->
+        val rows = buildString {
+            repeat(10_000) { index -> append("<div class=result><a class=name href='/b/$index'>书</a></div>") }
+            append("<div class=result><a class=name href='/b/0'>重复</a></div>")
+            append("<div class=result><a class=name href='/b/10000'>超额</a></div>")
+        }
+        server.enqueue(html(rows))
+
+        val result = runBlocking { withTimeout(60_000) {
+            engine().search(rule(server), "source-1", "x", allowCleartext = true)
+        } }
+
+        assertThat((result as SourceResult.Failure).error).isInstanceOf(SourceFailure.UnsafeRule::class.java)
+    }
+
+    @Test fun searchAllowsTenThousandDistinctHitsAndARepeatedUrl() = withServer { server ->
+        val rows = buildString {
+            repeat(10_000) { index -> append("<div class=result><a class=name href='/b/$index'>书</a></div>") }
+            append("<div class=result><a class=name href='/b/0'>重复</a></div>")
+        }
+        server.enqueue(html(rows))
+
+        val result = runBlocking { withTimeout(60_000) {
+            engine().search(rule(server), "source-1", "x", allowCleartext = true)
+        } }
+
+        assertThat((result as SourceResult.Success).value).hasSize(10_000)
+    }
+
+    @Test fun tocRejectsMoreThanTwentyThousandDistinctChapters() = withServer { server ->
+        val links = buildString {
+            append("<div id=chapters>")
+            repeat(20_000) { index -> append("<a href='/c/$index'>章</a>") }
+            append("<a href='/c/0'>重复</a><a href='/c/20000'>超额</a></div>")
+        }
+        server.enqueue(html(links))
+
+        val result = runBlocking { withTimeout(60_000) {
+            engine().toc(rule(server), "source-1", hit(server), "book-7", allowCleartext = true)
+        } }
+
+        assertThat((result as SourceResult.Failure).error).isInstanceOf(SourceFailure.UnsafeRule::class.java)
+    }
+
+    @Test fun tocAllowsTwentyThousandDistinctChaptersAndARepeatedUrl() = withServer { server ->
+        val links = buildString {
+            append("<div id=chapters>")
+            repeat(20_000) { index -> append("<a href='/c/$index'>章</a>") }
+            append("<a href='/c/0'>重复</a></div>")
+        }
+        server.enqueue(html(links))
+
+        val result = runBlocking { withTimeout(60_000) {
+            engine().toc(rule(server), "source-1", hit(server), "book-7", allowCleartext = true)
+        } }
+
+        assertThat((result as SourceResult.Success).value).hasSize(20_000)
+    }
+
+    @Test fun chapterRejectsAggregatedUtf8ContentOverEightMiB() = withServer { server ->
+        val paragraph = "中".repeat(500_000)
+        server.dispatcher = routing { request ->
+            val number = request.requestUrl!!.encodedPath.substringAfterLast('/').toInt()
+            val next = if (number < 6) "<a class=next href='/chapter/${number + 1}'>下一页</a>" else ""
+            html("<h1>章节</h1><div id=content><p>$paragraph</p></div>$next")
+        }
+        val rule = rule(server).copy(chapter = ChapterRuleDto(
+            title = "h1", content = "#content", pagination = true, nextPage = "a.next",
+        ))
+
+        val result = runBlocking { withTimeout(60_000) {
+            engine().chapter(rule, "source-1", server.url("/chapter/1").toString(), allowCleartext = true)
+        } }
+
+        assertThat((result as SourceResult.Failure).error).isInstanceOf(SourceFailure.UnsafeRule::class.java)
+    }
+
+    @Test fun chapterAllowsExactlyEightMiBUtf8IncludingPageSeparators() = withServer { server ->
+        val paragraph = "a".repeat(1_677_720)
+        server.dispatcher = routing { request ->
+            val number = request.requestUrl!!.encodedPath.substringAfterLast('/').toInt()
+            val next = if (number < 5) "<a class=next href='/chapter/${number + 1}'>下一页</a>" else ""
+            html("<h1>章节</h1><div id=content><p>$paragraph</p></div>$next")
+        }
+        val rule = rule(server).copy(chapter = ChapterRuleDto(
+            title = "h1", content = "#content", pagination = true, nextPage = "a.next",
+        ))
+
+        val result = runBlocking { withTimeout(60_000) {
+            engine().chapter(rule, "source-1", server.url("/chapter/1").toString(), allowCleartext = true)
+        } }
+
+        assertThat((result as SourceResult.Success).value.content.toByteArray(Charsets.UTF_8)).hasLength(8 * 1024 * 1024)
+    }
+
     @Test fun tocPaginationDeduplicatesThenGloballyReversesAndRenumbers() = withServer { server ->
         server.dispatcher = routing { request ->
             when (request.requestUrl?.queryParameter("p")) {

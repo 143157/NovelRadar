@@ -63,12 +63,17 @@ class ChapterPageParser(
         content: Boolean,
     ): SourceResult<String> {
         val expression = SelectorExpression.parse(rawSelector)
-        val node = try {
-            selector.elements(document, expression.selector).firstOrNull()
+        val nodes = try {
+            selector.elements(document, expression.selector)
         } catch (_: Selector.SelectorParseException) {
             return SourceResult.Failure(SourceFailure.Parse(field, rawSelector))
-        } ?: return SourceResult.Failure(SourceFailure.Parse(field, rawSelector))
-        val initial = if (content) node.html() else node.text()
+        }
+        val node = nodes.firstOrNull() ?: return SourceResult.Failure(SourceFailure.Parse(field, rawSelector))
+        val initial = when {
+            !content -> node.text()
+            nodes.size == 1 -> node.html()
+            else -> nodes.joinToString("\n") { it.outerHtml() }
+        }
         val value = if (expression.script == null) SourceResult.Success(initial)
             else scripts.transform(initial, expression.script)
         return when (value) {

@@ -74,4 +74,14 @@ class ChapterPageParserTest {
         assertThat((result as SourceResult.Success).value.nextPageUrl)
             .isEqualTo("https://books.example.test/3.html")
     }
+
+    @Test fun contentSelectorCombinesMultipleParagraphsInDocumentOrder() = runBlocking {
+        val html = "<h1>第一章</h1><div id=content><p>首段</p><p>次段</p></div>"
+
+        val result = parser.parse(
+            html, "https://books.example.test/chapter/1", ChapterRuleDto(title = "h1", content = "#content p"),
+        )
+
+        assertThat((result as SourceResult.Success).value.content).isEqualTo("首段\n次段")
+    }
 }
