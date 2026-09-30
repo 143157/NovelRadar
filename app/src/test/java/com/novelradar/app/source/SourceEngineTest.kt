@@ -29,6 +29,16 @@ import okio.Buffer
 import org.junit.Test
 
 class SourceEngineTest {
+    @Test fun searchRecognizesHtmlVerificationPageBeforeSelectorParsing() = withServer { server ->
+        server.enqueue(html("<html><head><title>Just a moment...</title></head>" +
+            "<body><div id='cf-challenge'>Checking your browser</div></body></html>"))
+
+        val result = runBlocking { engine().search(rule(server), "source-1", "星河", allowCleartext = true) }
+
+        assertThat((result as SourceResult.Failure).error).isEqualTo(SourceFailure.VerificationRequired)
+        assertThat(server.requestCount).isEqualTo(1)
+    }
+
     @Test fun fourEndpointFlowSearchesEnrichesListsAndReads() = withServer { server ->
         server.dispatcher = routing { request ->
             when (request.requestUrl?.encodedPath) {

@@ -28,6 +28,7 @@ import java.nio.ByteBuffer
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
+import java.util.Locale
 import okhttp3.Request
 import org.jsoup.Jsoup
 
@@ -74,6 +75,7 @@ class SourceEngine(
                 is SourceResult.Success -> decoded.value
                 is SourceResult.Failure -> return decoded
             }
+            if (isVerificationPage(html)) return SourceResult.Failure(SourceFailure.VerificationRequired)
             val parsedHits = when (val parsed = searchParser.parse(html, page.finalUrl, sourceId, searchRule)) {
                 is SourceResult.Success -> parsed.value
                 is SourceResult.Failure -> return parsed
@@ -323,6 +325,13 @@ class SourceEngine(
 
     private fun safeId(id: String): Boolean =
         id.length in 1..128 && id != "." && ".." !in id && LOCAL_ID.matches(id)
+
+    private fun isVerificationPage(html: String): Boolean {
+        val document = Jsoup.parse(html)
+        val title = document.title().trim().lowercase(Locale.ROOT)
+        return title.contains("just a moment") || title.contains("人机验证") || title.contains("安全验证") ||
+            document.select("#cf-challenge, #captcha, .g-recaptcha, form[action*=captcha]").isNotEmpty()
+    }
 
     private fun unsafe(reason: String): SourceResult.Failure = SourceResult.Failure(SourceFailure.UnsafeRule(reason))
 

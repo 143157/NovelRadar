@@ -1,6 +1,10 @@
 package com.novelradar.app.app
 
+import android.net.Uri
+import android.security.NetworkSecurityPolicy
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,6 +36,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.novelradar.app.SourceBootstrapState
 import com.novelradar.app.feature.search.SearchScreen
 import com.novelradar.app.feature.search.SearchViewModel
+import com.novelradar.app.feature.sources.SourceManagerEvent
+import com.novelradar.app.feature.sources.SourceManagerScreen
+import com.novelradar.app.feature.sources.SourceManagerViewModel
 import com.novelradar.app.ui.theme.InkBlack
 import com.novelradar.app.ui.theme.SignalOrange
 import kotlinx.coroutines.flow.StateFlow
@@ -40,7 +47,7 @@ private val destinations = listOf(
     "书架" to "▤",
     "搜书" to "⌕",
     "下载" to "↓",
-    "设置" to "⚙",
+    "书源" to "⚙",
 )
 
 @Composable
@@ -59,12 +66,39 @@ fun NovelRadarApp(container: AppContainer, bootstrapState: StateFlow<SourceBoots
     }
     val searchViewModel: SearchViewModel = viewModel(factory = searchFactory)
     val searchState by searchViewModel.uiState.collectAsStateWithLifecycle()
+    val sourcesFactory = remember(container) {
+        object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                require(modelClass == SourceManagerViewModel::class.java)
+                @Suppress("UNCHECKED_CAST")
+                return SourceManagerViewModel(
+                    repository = container.sourceRules,
+                    testSource = container.testSource::test,
+                    importAction = { uri -> container.importRules.import(Uri.parse(uri)) },
+                    cleartextAvailable = { host -> NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted(host) },
+                    parser = container.ruleParser,
+                ) as T
+            }
+        }
+    }
+    val sourceViewModel: SourceManagerViewModel = viewModel(factory = sourcesFactory)
+    val sourceState by sourceViewModel.uiState.collectAsStateWithLifecycle()
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { sourceViewModel.onImportSelected(it.toString()) }
+    }
     val preparation by bootstrapState.collectAsStateWithLifecycle()
 
     LaunchedEffect(searchViewModel) {
         searchViewModel.navigation.collect { bookId ->
             selectedBookId = bookId
             selectedIndex = 1
+        }
+    }
+    LaunchedEffect(sourceViewModel) {
+        sourceViewModel.events.collect { event ->
+            when (event) {
+                SourceManagerEvent.OpenDocument -> importLauncher.launch(arrayOf("application/json", "text/plain", "text/*"))
+            }
         }
     }
     BackHandler(enabled = selectedBookId != null) { selectedBookId = null }
@@ -101,6 +135,17 @@ fun NovelRadarApp(container: AppContainer, bootstrapState: StateFlow<SourceBoots
                 onResultSelected = searchViewModel::selectResult,
                 sourcesReady = preparation == SourceBootstrapState.Ready,
                 bootstrapFailed = preparation == SourceBootstrapState.Failed,
+                modifier = modifier,
+            )
+            selectedIndex == 3 -> SourceManagerScreen(
+                state = sourceState,
+                onImport = sourceViewModel::requestImport,
+                onTestAll = sourceViewModel::testAll,
+                onToggle = sourceViewModel::requestToggle,
+                onTestOne = sourceViewModel::testOne,
+                onDelete = sourceViewModel::deleteUserRule,
+                onConfirmHttp = sourceViewModel::confirmHttpEnable,
+                onCancelHttp = sourceViewModel::cancelHttpEnable,
                 modifier = modifier,
             )
             else -> Column(modifier, horizontalAlignment = Alignment.CenterHorizontally,
