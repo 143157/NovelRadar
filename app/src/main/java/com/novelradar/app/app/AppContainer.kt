@@ -11,6 +11,8 @@ import com.novelradar.app.data.repository.RoomBookRepository
 import com.novelradar.app.data.repository.RoomSourceRuleRepository
 import com.novelradar.app.domain.repository.BookRepository
 import com.novelradar.app.domain.repository.SourceRuleRepository
+import com.novelradar.app.domain.search.AggregateSearchUseCase
+import com.novelradar.app.domain.search.SourceSearch
 import com.novelradar.app.feature.sources.ImportRulesUseCase
 import com.novelradar.app.source.SourceEngine
 import com.novelradar.app.source.http.SearchRequestFactory
@@ -63,6 +65,9 @@ class AppContainer(
         selector = selector,
         scripts = scripts,
     )
+    val aggregateSearch = AggregateSearchUseCase(sourceRules, SourceSearch { stored, rule, keyword ->
+        sourceEngine.search(rule, stored.sourceId, keyword, stored.allowCleartext)
+    }, ruleParser)
 
     private val preferences = PreferenceDataStoreFactory.create {
         appContext.preferencesDataStoreFile("novel-radar-bootstrap.preferences_pb")
