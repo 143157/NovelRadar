@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -20,7 +19,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -34,6 +32,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.novelradar.app.SourceBootstrapState
+import com.novelradar.app.feature.book.BookDetailScreen
+import com.novelradar.app.feature.book.BookDetailViewModel
 import com.novelradar.app.feature.search.SearchScreen
 import com.novelradar.app.feature.search.SearchViewModel
 import com.novelradar.app.feature.sources.SourceManagerEvent
@@ -126,7 +126,7 @@ fun NovelRadarApp(container: AppContainer, bootstrapState: StateFlow<SourceBoots
     ) { contentPadding ->
         val modifier = Modifier.fillMaxSize().padding(contentPadding)
         when {
-            selectedBookId != null -> BookDetailPreview(requireNotNull(selectedBookId), container, { selectedBookId = null }, modifier)
+            selectedBookId != null -> BookDetailRoute(requireNotNull(selectedBookId), container, { selectedBookId = null }, modifier)
             selectedIndex == 1 -> SearchScreen(
                 state = searchState,
                 onQueryChanged = searchViewModel::onQueryChanged,
@@ -158,15 +158,20 @@ fun NovelRadarApp(container: AppContainer, bootstrapState: StateFlow<SourceBoots
 }
 
 @Composable
-private fun BookDetailPreview(bookId: String, container: AppContainer, onBack: () -> Unit, modifier: Modifier) {
-    val book by produceState<com.novelradar.app.domain.model.Book?>(initialValue = null, bookId) {
-        value = container.books.getBook(bookId)
+private fun BookDetailRoute(bookId: String, container: AppContainer, onBack: () -> Unit, modifier: Modifier) {
+    val factory = remember(bookId, container) {
+        object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                require(modelClass == BookDetailViewModel::class.java)
+                @Suppress("UNCHECKED_CAST")
+                return BookDetailViewModel(bookId, container.catalog, container.books) as T
+            }
+        }
     }
-    Column(modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Button(onClick = onBack) { Text("返回搜书") }
-        Text(book?.bookName ?: "正在打开书籍…", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = InkBlack)
-        book?.author?.takeIf(String::isNotBlank)?.let { Text(it, color = InkBlack) }
-        Text("书籍编号：$bookId", fontSize = 11.sp, color = InkBlack)
-        Text("书籍详情和章节阅读正在接入。", fontSize = 14.sp, color = InkBlack)
-    }
+    val model: BookDetailViewModel = viewModel(key = "book:$bookId", factory = factory)
+    val state by model.uiState.collectAsStateWithLifecycle()
+    BookDetailScreen(state, onBack = onBack, onSourceSelected = model::selectSource,
+        onAddToShelf = model::addToShelf, onRefresh = model::refresh,
+        onChapterQueryChanged = model::onChapterQueryChanged, onToggleOrder = model::toggleChapterOrder,
+        modifier = modifier)
 }

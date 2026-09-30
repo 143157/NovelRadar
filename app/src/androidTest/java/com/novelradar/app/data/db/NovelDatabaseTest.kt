@@ -56,6 +56,27 @@ class NovelDatabaseTest {
             .map { it.chapterId }).containsExactly("c-1", "c-3").inOrder()
     }
 
+    @Test fun catalogRefreshKeepsMatchingDownloadedChapterMetadata() = runBlocking {
+        database.bookDao().upsertBookAndSource(book(), bookSource())
+        database.chapterDao().upsertAll(listOf(
+            chapter("c-1", 0).copy(localContentState = "DOWNLOADED", localFilePath = "books/book-1/c-1.txt",
+                contentSha256 = "abc", contentBytes = 42),
+            chapter("c-2", 1),
+        ))
+
+        database.chapterDao().replaceSnapshot("book-1", "source-1", listOf(
+            chapter("c-1", 1).copy(title = "更正标题"),
+            chapter("c-3", 2),
+        ))
+
+        val rows = database.chapterDao().getChapters("book-1", "source-1")
+        assertThat(rows.map { it.chapterId }).containsExactly("c-1", "c-3").inOrder()
+        assertThat(rows.first().title).isEqualTo("更正标题")
+        assertThat(rows.first().localContentState).isEqualTo("DOWNLOADED")
+        assertThat(rows.first().localFilePath).isEqualTo("books/book-1/c-1.txt")
+        assertThat(rows.first().contentSha256).isEqualTo("abc")
+    }
+
     @Test fun shelfUpsertKeepsOneRowPerBook() = runBlocking {
         database.bookDao().upsertBookAndSource(book(), bookSource())
         database.bookDao().upsertShelfEntry(shelfEntry(addedAtEpochMillis = 1))

@@ -8,8 +8,12 @@ import com.novelradar.app.data.bootstrap.BuiltInRuleInstaller
 import com.novelradar.app.data.bootstrap.DataStoreBundledRuleVersionStore
 import com.novelradar.app.data.db.NovelDatabase
 import com.novelradar.app.data.repository.RoomBookRepository
+import com.novelradar.app.data.repository.DefaultCatalogRepository
+import com.novelradar.app.data.repository.RoomChapterCatalogStore
 import com.novelradar.app.data.repository.RoomSourceRuleRepository
 import com.novelradar.app.domain.repository.BookRepository
+import com.novelradar.app.domain.repository.CatalogFetcher
+import com.novelradar.app.domain.repository.CatalogRepository
 import com.novelradar.app.domain.repository.SourceRuleRepository
 import com.novelradar.app.domain.search.AggregateSearchUseCase
 import com.novelradar.app.domain.search.SourceSearch
@@ -71,6 +75,12 @@ class AppContainer(
     }
     val aggregateSearch = AggregateSearchUseCase(sourceRules, sourceSearch, ruleParser)
     val testSource = TestSourceUseCase(sourceSearch, ruleParser)
+    val catalog: CatalogRepository = DefaultCatalogRepository(
+        books, sourceRules, RoomChapterCatalogStore(database.chapterDao()),
+        CatalogFetcher { rule, stored, hit, bookId ->
+            sourceEngine.toc(rule, stored.sourceId, hit, bookId, stored.allowCleartext)
+        }, ruleParser,
+    )
 
     private val preferences = PreferenceDataStoreFactory.create {
         appContext.preferencesDataStoreFile("novel-radar-bootstrap.preferences_pb")
