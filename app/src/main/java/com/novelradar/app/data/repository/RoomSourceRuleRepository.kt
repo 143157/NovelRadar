@@ -10,10 +10,10 @@ import com.novelradar.app.domain.repository.ImportSummary
 import com.novelradar.app.domain.repository.SourceRuleRepository
 import com.novelradar.app.source.rule.RuleDto
 import com.novelradar.app.source.rule.RuleValidator
+import com.novelradar.app.source.rule.deriveSourceId
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import java.net.URI
-import java.security.MessageDigest
 import java.util.Locale
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -31,7 +31,7 @@ class RoomSourceRuleRepository(
     override suspend fun upsertImported(rules: List<RuleDto>): ImportSummary {
         require(rules.isNotEmpty()) { "No source rules provided" }
         require(validator.validateAll(rules).isEmpty()) { "Invalid source rules" }
-        val identified = rules.map { rule -> rule to (rule.id?.takeIf(String::isNotBlank) ?: sourceId(rule)) }
+        val identified = rules.map { rule -> rule to (rule.id?.takeIf(String::isNotBlank) ?: deriveSourceId(rule)) }
         require(identified.map { it.second }.distinct().size == identified.size) { "Duplicate source IDs" }
         val existing = identified.map { (_, id) -> dao.getById(id) }
         require(existing.none { it?.builtIn == true }) { "Built-in sources cannot be overwritten" }
@@ -89,7 +89,6 @@ class RoomSourceRuleRepository(
         require(dao.deleteImported(sourceId) == 1) { "Source does not exist or is built in" }
     }
 }
-
 private fun SourceRuleEntity.toDomain(): StoredSourceRule = StoredSourceRule(
     sourceId = sourceId,
     rawJson = rawJson,
@@ -127,11 +126,4 @@ private fun failureFromColumns(kind: String?, detail: String?): SourceFailure? =
     "UnsafeRule" -> SourceFailure.UnsafeRule(detail.orEmpty())
     "Unexpected" -> SourceFailure.Unexpected(detail.orEmpty())
     else -> null
-}
-
-private fun sourceId(rule: RuleDto): String {
-    val host = URI(rule.url).host.lowercase(Locale.ROOT)
-    val identity = "$host|${rule.name}"
-    return MessageDigest.getInstance("SHA-256").digest(identity.toByteArray(Charsets.UTF_8))
-        .take(8).joinToString("") { "%02x".format(it.toInt() and 0xff) }
 }

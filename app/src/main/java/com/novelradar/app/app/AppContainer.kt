@@ -11,6 +11,7 @@ import com.novelradar.app.data.repository.RoomBookRepository
 import com.novelradar.app.data.repository.RoomSourceRuleRepository
 import com.novelradar.app.domain.repository.BookRepository
 import com.novelradar.app.domain.repository.SourceRuleRepository
+import com.novelradar.app.feature.sources.ImportRulesUseCase
 import com.novelradar.app.source.SourceEngine
 import com.novelradar.app.source.http.SearchRequestFactory
 import com.novelradar.app.source.http.SourceHttpClient
@@ -21,6 +22,7 @@ import com.novelradar.app.source.parse.SearchPageParser
 import com.novelradar.app.source.parse.TocPageParser
 import com.novelradar.app.source.rule.RuleJsonParser
 import com.novelradar.app.source.rule.RuleValidator
+import com.novelradar.app.source.importer.RuleImporter
 import com.novelradar.app.source.script.QuickJsScriptExecutor
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +45,11 @@ class AppContainer(
     val ruleValidator = RuleValidator()
     val sourceRules: SourceRuleRepository = RoomSourceRuleRepository(database.sourceRuleDao(), ruleValidator)
     val books: BookRepository = RoomBookRepository(database.bookDao())
+    val importRules = ImportRulesUseCase(
+        appContext.contentResolver,
+        RuleImporter(sourceRules, ruleParser, ruleValidator),
+        ioDispatcher,
+    )
 
     private val selector = HtmlSelector()
     private val scripts = QuickJsScriptExecutor()
