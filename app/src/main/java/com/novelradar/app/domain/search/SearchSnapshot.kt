@@ -18,5 +18,6 @@ data class SearchSnapshot(
     val totalSources: Int = 0,
     val activeSources: Set<String> = emptySet(),
     val failures: Map<String, SourceFailure> = emptyMap(),
+    val sourceNames: Map<String, String> = emptyMap(),
     val lastEvent: SearchEvent? = null,
 )

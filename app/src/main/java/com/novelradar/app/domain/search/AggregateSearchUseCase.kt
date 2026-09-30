@@ -35,13 +35,18 @@ class AggregateSearchUseCase(
         }
         val sources = repository.enabled()
         val health = sources.associate { it.sourceId to it.health }
+        val sourceNames = sources.associate { stored ->
+            val name = (parser.parse(stored.rawJson) as? RuleParseResult.Success)
+                ?.rules?.singleOrNull()?.name?.takeIf(String::isNotBlank)
+            stored.sourceId to (name ?: stored.sourceId)
+        }
         val semaphore = Semaphore(MAX_ACTIVE_SOURCES)
         val lock = Mutex()
         val hits = mutableListOf<SearchHit>()
         val active = linkedSetOf<String>()
         val failures = linkedMapOf<String, SourceFailure>()
         var completed = 0
-        send(SearchSnapshot(query = keyword, totalSources = sources.size))
+        send(SearchSnapshot(query = keyword, totalSources = sources.size, sourceNames = sourceNames))
 
         suspend fun publish(event: SearchEvent, newHits: List<SearchHit> = emptyList()) {
             lock.lock()
@@ -66,6 +71,7 @@ class AggregateSearchUseCase(
                     totalSources = sources.size,
                     activeSources = active.toSet(),
                     failures = failures.toMap(),
+                    sourceNames = sourceNames,
                     lastEvent = event,
                 ))
             } finally {

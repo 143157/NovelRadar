@@ -20,7 +20,7 @@ import org.junit.Test
 
 class AggregateSearchUseCaseTest {
     @Test fun oneSourceFailureDoesNotDiscardOtherResult() = runTest {
-        val repository = FakeRules(listOf(stored("ok"), stored("bad")))
+        val repository = FakeRules(listOf(stored("ok"), stored("bad", name = "失效书源")))
         val useCase = AggregateSearchUseCase(repository, SourceSearch { stored, _, _ ->
             if (stored.sourceId == "bad") SourceResult.Failure(SourceFailure.Timeout)
             else SourceResult.Success(listOf(hit("ok")))
@@ -32,6 +32,7 @@ class AggregateSearchUseCaseTest {
         assertThat(last.totalSources).isEqualTo(2)
         assertThat(last.results).hasSize(1)
         assertThat(last.failures.keys).containsExactly("bad")
+        assertThat(last.sourceNames["bad"]).isEqualTo("失效书源")
         assertThat(snapshots.any { it.completedSources == 1 }).isTrue()
     }
 
@@ -100,8 +101,8 @@ class AggregateSearchUseCaseTest {
         assertThat(last.failures["throwing"]).isInstanceOf(SourceFailure.Unexpected::class.java)
     }
 
-    private fun stored(id: String, disabledInJson: Boolean = false): StoredSourceRule {
-        val json = """{"id":"$id","url":"https://example.org/","name":"$id","disabled":$disabledInJson,
+    private fun stored(id: String, disabledInJson: Boolean = false, name: String = id): StoredSourceRule {
+        val json = """{"id":"$id","url":"https://example.org/","name":"$name","disabled":$disabledInJson,
             "search":{"url":"https://example.org/search?q=%s","method":"GET","result":".book","bookName":"a"},
             "toc":{"item":"#toc a"},"chapter":{"title":"h1","content":"#content"}}"""
         return StoredSourceRule(id, json)

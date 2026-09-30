@@ -11,7 +11,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             NovelRadarTheme {
-                NovelRadarApp()
+                val app = application as NovelRadarApplication
+                NovelRadarApp(app.container, app.bootstrapState)
             }
         }
     }
