@@ -81,25 +81,25 @@ git commit -m "feat: add book details and chapter catalog"
 - Test: `app/src/test/java/com/novelradar/app/data/files/AtomicChapterFileStoreTest.kt`
 - Test: `app/src/test/java/com/novelradar/app/data/repository/DefaultChapterRepositoryTest.kt`
 
-- [ ] **Step 1: Write failing storage tests**
+- [x] **Step 1: Write failing storage tests**
 
 Test UTF-8 round-trip, deterministic path, temporary-file cleanup, interrupted write preserving the previous file, SHA-256 validation, delete-one-book, and path traversal rejection.
 
-- [ ] **Step 2: Verify failure**
+- [x] **Step 2: Verify failure**
 
 Run: `.\gradlew.bat :app:testDebugUnitTest --tests "*.AtomicChapterFileStoreTest"`
 
 Expected: FAIL.
 
-- [ ] **Step 3: Implement atomic storage**
+- [x] **Step 3: Implement atomic storage**
 
 Store under `filesDir/books/<bookId>/<sourceId>/<chapterId>.txt`. Validate IDs against `[A-Za-z0-9_-]{1,80}`. Write `<chapterId>.tmp`, flush and close, calculate SHA-256, then use `Files.move(..., ATOMIC_MOVE, REPLACE_EXISTING)` when available and a same-directory rename fallback otherwise.
 
-- [ ] **Step 4: Implement cache-first repository behavior**
+- [x] **Step 4: Implement cache-first repository behavior**
 
 `loadChapter` returns `Downloaded`, `Cached`, or `Network` origin. Read and verify local content first. On missing/corrupt files, request and parse network content, atomically store it, then update Room. Provide bounded `prefetchNext(bookId, sourceId, chapterIndex, count = 2)` and never prefetch on metered network when the setting disallows it.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `.\gradlew.bat :app:testDebugUnitTest --tests "*.data.files.*" --tests "*.DefaultChapterRepositoryTest"`
 
@@ -121,17 +121,17 @@ git commit -m "feat: cache chapter text atomically"
 - Test: `app/src/test/java/com/novelradar/app/data/preferences/DataStoreReaderSettingsRepositoryTest.kt`
 - Test: `app/src/test/java/com/novelradar/app/data/repository/RoomReadingProgressRepositoryTest.kt`
 
-- [ ] **Step 1: Write failing bounds and progress tests**
+- [x] **Step 1: Write failing bounds and progress tests**
 
 Assert font size clamps to 14–36 sp, line height 1.2–2.2, horizontal margin 8–48 dp, brightness null or 0.05–1.0, theme enum persistence, mode persistence, and progress replacement by book ID.
 
-- [ ] **Step 2: Verify failure**
+- [x] **Step 2: Verify failure**
 
 Run: `.\gradlew.bat :app:testDebugUnitTest --tests "*.ReaderSettingsRepositoryTest" --tests "*.ReadingProgressRepositoryTest"`
 
 Expected: FAIL.
 
-- [ ] **Step 3: Implement reader preferences**
+- [x] **Step 3: Implement reader preferences**
 
 Use:
 
@@ -149,11 +149,11 @@ data class ReaderPreferences(
 
 Write each update atomically through DataStore and map invalid stored values back into bounds.
 
-- [ ] **Step 4: Implement debounced progress writes**
+- [x] **Step 4: Implement debounced progress writes**
 
 Keep exact writes available for chapter changes and lifecycle stop. For scroll/page position changes, use a 750 ms debounce and `distinctUntilChanged` before Room upsert. Store book/source/chapter IDs, chapter index, character offset, and updated time.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `.\gradlew.bat :app:testDebugUnitTest --tests "*.ReaderSettingsRepositoryTest" --tests "*.ReadingProgressRepositoryTest"`
 
@@ -163,6 +163,8 @@ Expected: PASS.
 git add app/src/main/java/com/novelradar/app/domain/model/ReaderPreferences.kt app/src/main/java/com/novelradar/app/domain/repository app/src/main/java/com/novelradar/app/data/preferences app/src/main/java/com/novelradar/app/data/repository app/src/test
 git commit -m "feat: persist reader settings and progress"
 ```
+
+Implementation evidence (2026-10-01): Task 2 is committed in `e9bdd42` and `28b7c02`; Task 3 in `9ad217a` and `04e41fc`. Both passed separate specification and quality reviews. The combined verification produced 203 unit tests with zero failures/errors, successful lint, debug APK build, and Android-test source compilation. No Android device tests have run. Settings unit tests use an in-memory DataStore after repeat file replacement failed in the Windows/JVM test environment; actual Android file persistence remains unverified. Task 1 still has follow-up work for detail refresh and cover rendering; reading/download actions are connected in subsequent tasks.
 
 ## Task 4: Build scroll and paged reading experiences
 
