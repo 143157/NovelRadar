@@ -52,6 +52,19 @@ class RoomBookRepositoryTest {
         assertThat(repository.observeShelf().first()).isEmpty()
     }
 
+    @Test fun savingNewLocationReplacesOnlyThatBooksProgressRow() = runTest {
+        val first = repository.saveSearchHit(hit("source-a"))
+        val second = repository.saveSearchHit(hit("source-a").copy(bookName = "另一部小说"))
+        repository.saveProgress(ReadingLocation(first.bookId, "source-a", "chapter-1", 0, 1, 100L))
+        repository.saveProgress(ReadingLocation(second.bookId, "source-a", "chapter-3", 2, 3, 101L))
+
+        val updated = ReadingLocation(first.bookId, "source-a", "chapter-2", 1, 4, 102L)
+        repository.saveProgress(updated)
+
+        assertThat(repository.progress(first.bookId).first()).isEqualTo(updated)
+        assertThat(repository.progress(second.bookId).first()!!.chapterId).isEqualTo("chapter-3")
+    }
+
     private fun hit(sourceId: String) = SearchHit(
         sourceId = sourceId,
         bookName = "测试小说",

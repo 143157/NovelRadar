@@ -9,7 +9,9 @@ import com.novelradar.app.data.bootstrap.BuiltInRuleInstaller
 import com.novelradar.app.data.bootstrap.DataStoreBundledRuleVersionStore
 import com.novelradar.app.data.db.NovelDatabase
 import com.novelradar.app.data.files.AtomicChapterFileStore
+import com.novelradar.app.data.preferences.DataStoreReaderSettingsRepository
 import com.novelradar.app.data.repository.RoomBookRepository
+import com.novelradar.app.data.repository.RoomReadingProgressRepository
 import com.novelradar.app.data.repository.DefaultCatalogRepository
 import com.novelradar.app.data.repository.DefaultChapterRepository
 import com.novelradar.app.data.repository.ChapterPageFetcher
@@ -20,6 +22,8 @@ import com.novelradar.app.domain.repository.BookRepository
 import com.novelradar.app.domain.repository.CatalogFetcher
 import com.novelradar.app.domain.repository.CatalogRepository
 import com.novelradar.app.domain.repository.ChapterRepository
+import com.novelradar.app.domain.repository.ReaderSettingsRepository
+import com.novelradar.app.domain.repository.ReadingProgressRepository
 import com.novelradar.app.domain.repository.SourceRuleRepository
 import com.novelradar.app.domain.search.AggregateSearchUseCase
 import com.novelradar.app.domain.search.SourceSearch
@@ -39,6 +43,7 @@ import com.novelradar.app.source.importer.RuleImporter
 import com.novelradar.app.source.script.QuickJsScriptExecutor
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import okhttp3.OkHttpClient
 
 /** One process-wide graph, owned by [com.novelradar.app.NovelRadarApplication]. */
@@ -58,6 +63,11 @@ class AppContainer(
     val ruleValidator = RuleValidator()
     val sourceRules: SourceRuleRepository = RoomSourceRuleRepository(database.sourceRuleDao(), ruleValidator)
     val books: BookRepository = RoomBookRepository(database.bookDao())
+    val readingProgress: ReadingProgressRepository = RoomReadingProgressRepository(books)
+    private val readerPreferenceStore = PreferenceDataStoreFactory.create {
+        appContext.preferencesDataStoreFile("novel-radar-reader.preferences_pb")
+    }
+    val readerSettings: ReaderSettingsRepository = DataStoreReaderSettingsRepository(readerPreferenceStore)
     val importRules = ImportRulesUseCase(
         appContext.contentResolver,
         RuleImporter(sourceRules, ruleParser, ruleValidator),
@@ -91,7 +101,7 @@ class AppContainer(
         isMeteredNetwork = {
             appContext.getSystemService(ConnectivityManager::class.java)?.isActiveNetworkMetered ?: true
         },
-        allowMeteredPrefetch = { false },
+        allowMeteredPrefetch = { readerSettings.preferences.first().allowMeteredPrefetch },
     )
     val catalog: CatalogRepository = DefaultCatalogRepository(
         books, sourceRules, RoomChapterCatalogStore(database.chapterDao()),
