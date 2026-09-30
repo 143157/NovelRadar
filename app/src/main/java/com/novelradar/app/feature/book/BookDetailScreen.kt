@@ -87,7 +87,7 @@ fun BookDetailScreen(
                         Text("整本下载")
                     }
                 }
-                if (!canRead || !canDownload) Text("阅读与下载功能正在接入", color = QuietInk, fontSize = 11.sp)
+                if (!canDownload) Text("整本下载功能正在接入", color = QuietInk, fontSize = 11.sp)
                 state.notice?.let { Text(it, color = InkBlack, fontSize = 12.sp) }
                 state.warning?.let { Text(
                     (if (state.chapters.isEmpty()) "目录加载失败：" else "目录更新失败，当前显示已保存内容：") + it.label(),

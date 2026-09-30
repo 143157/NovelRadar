@@ -51,6 +51,22 @@ class BookDetailScreenTest {
         assertThat(refreshed).isTrue()
     }
 
+    @Test fun enabledReadingActionsOpenSavedPositionOrChosenChapter() {
+        var started = false
+        var selectedChapter: String? = null
+        compose.setContent {
+            NovelRadarTheme {
+                BookDetailScreen(state(), onBack = {}, onSourceSelected = {}, onAddToShelf = {}, onRefresh = {},
+                    onChapterQueryChanged = {}, onToggleOrder = {}, canRead = true,
+                    onStartReading = { started = true }, onChapterSelected = { selectedChapter = it.chapterId })
+            }
+        }
+        compose.onNodeWithText("开始阅读").performClick()
+        compose.onNodeWithText("第一章").performClick()
+        assertThat(started).isTrue()
+        assertThat(selectedChapter).isEqualTo("c1")
+    }
+
     private fun state() = BookDetailUiState(
         book = Book("book-1", "星河旅人|叶子", "星河旅人", "叶子"),
         sources = listOf(BookSource("book-1", "a", "https://example.org/a"),
