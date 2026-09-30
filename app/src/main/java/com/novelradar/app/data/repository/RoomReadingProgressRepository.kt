@@ -5,12 +5,12 @@ import com.novelradar.app.domain.repository.ReadingLocation
 import com.novelradar.app.domain.repository.ReadingProgressRepository
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
-import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.distinctUntilChangedBy
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -18,37 +18,51 @@ import kotlinx.coroutines.sync.withLock
 class RoomReadingProgressRepository(private val books: BookRepository) : ReadingProgressRepository {
     private val writeMutex = Mutex()
     private val exactGenerations = ConcurrentHashMap<String, AtomicLong>()
+    private val latestExactAt = ConcurrentHashMap<String, Long>()
 
     override fun progress(bookId: String): Flow<ReadingLocation?> = books.progress(bookId)
 
     override suspend fun saveExact(location: ReadingLocation) {
         writeMutex.withLock {
-            generation(location.bookId).incrementAndGet()
             books.saveProgress(location)
+            latestExactAt.merge(location.bookId, location.updatedAtEpochMillis, ::maxOf)
+            generation(location.bookId).incrementAndGet()
         }
     }
 
-    @OptIn(FlowPreview::class)
-    override suspend fun collectPositionChanges(changes: Flow<ReadingLocation>) {
-        changes.map { location -> PositionChange(location, generation(location.bookId).get()) }
-            .debounce(POSITION_DEBOUNCE_MILLIS)
-            .distinctUntilChangedBy { change ->
-                with(change.location) {
-                    listOf(bookId, sourceId, chapterId, chapterIndex, offset, change.exactGeneration)
-                }
-            }
-            .collect { change ->
+    override suspend fun collectPositionChanges(changes: Flow<ReadingLocation>) = coroutineScope {
+        val pending = ConcurrentHashMap<String, Job>()
+        val lastSaved = mutableMapOf<String, PositionKey>()
+        changes.collect { location ->
+            if (isOlderThanExact(location)) return@collect
+            val bookId = location.bookId
+            val capturedGeneration = generation(bookId).get()
+            pending.remove(bookId)?.cancel()
+            val job = launch {
+                delay(POSITION_DEBOUNCE_MILLIS)
                 writeMutex.withLock {
-                    if (generation(change.location.bookId).get() == change.exactGeneration) {
-                        books.saveProgress(change.location)
+                    val key = PositionKey(location.sourceId, location.chapterId,
+                        location.chapterIndex, location.offset, capturedGeneration)
+                    if (generation(bookId).get() == capturedGeneration &&
+                        !isOlderThanExact(location) && lastSaved[bookId] != key) {
+                        books.saveProgress(location)
+                        lastSaved[bookId] = key
                     }
                 }
             }
+            pending[bookId] = job
+            job.invokeOnCompletion { pending.remove(bookId, job) }
+        }
     }
 
     private fun generation(bookId: String) = exactGenerations.getOrPut(bookId) { AtomicLong() }
 
-    private data class PositionChange(val location: ReadingLocation, val exactGeneration: Long)
+    // Exact chapter/lifecycle saves win ties within the same wall-clock millisecond.
+    private fun isOlderThanExact(location: ReadingLocation): Boolean =
+        latestExactAt[location.bookId]?.let { location.updatedAtEpochMillis <= it } ?: false
+
+    private data class PositionKey(val sourceId: String, val chapterId: String,
+        val chapterIndex: Int, val offset: Int, val exactGeneration: Long)
 
     private companion object { const val POSITION_DEBOUNCE_MILLIS = 750L }
 }
