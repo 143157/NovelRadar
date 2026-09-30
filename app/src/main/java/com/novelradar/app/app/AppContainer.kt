@@ -1,19 +1,25 @@
 package com.novelradar.app.app
 
 import android.content.Context
+import android.net.ConnectivityManager
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.room.Room
 import com.novelradar.app.data.bootstrap.BuiltInRuleInstaller
 import com.novelradar.app.data.bootstrap.DataStoreBundledRuleVersionStore
 import com.novelradar.app.data.db.NovelDatabase
+import com.novelradar.app.data.files.AtomicChapterFileStore
 import com.novelradar.app.data.repository.RoomBookRepository
 import com.novelradar.app.data.repository.DefaultCatalogRepository
+import com.novelradar.app.data.repository.DefaultChapterRepository
+import com.novelradar.app.data.repository.ChapterPageFetcher
+import com.novelradar.app.data.repository.RuleBasedChapterContentFetcher
 import com.novelradar.app.data.repository.RoomChapterCatalogStore
 import com.novelradar.app.data.repository.RoomSourceRuleRepository
 import com.novelradar.app.domain.repository.BookRepository
 import com.novelradar.app.domain.repository.CatalogFetcher
 import com.novelradar.app.domain.repository.CatalogRepository
+import com.novelradar.app.domain.repository.ChapterRepository
 import com.novelradar.app.domain.repository.SourceRuleRepository
 import com.novelradar.app.domain.search.AggregateSearchUseCase
 import com.novelradar.app.domain.search.SourceSearch
@@ -75,6 +81,18 @@ class AppContainer(
     }
     val aggregateSearch = AggregateSearchUseCase(sourceRules, sourceSearch, ruleParser)
     val testSource = TestSourceUseCase(sourceSearch, ruleParser)
+    val chapters: ChapterRepository = DefaultChapterRepository(
+        chapters = database.chapterDao(),
+        files = AtomicChapterFileStore(appContext.filesDir.toPath()),
+        fetcher = RuleBasedChapterContentFetcher(sourceRules,
+            ChapterPageFetcher { rule, sourceId, url, allowCleartext ->
+                sourceEngine.chapter(rule, sourceId, url, allowCleartext)
+            }, ruleParser),
+        isMeteredNetwork = {
+            appContext.getSystemService(ConnectivityManager::class.java)?.isActiveNetworkMetered ?: true
+        },
+        allowMeteredPrefetch = { false },
+    )
     val catalog: CatalogRepository = DefaultCatalogRepository(
         books, sourceRules, RoomChapterCatalogStore(database.chapterDao()),
         CatalogFetcher { rule, stored, hit, bookId ->
