@@ -14,9 +14,13 @@ import com.novelradar.app.domain.repository.SourceRuleRepository
 import com.novelradar.app.source.parse.ChapterPage
 import com.novelradar.app.source.rule.RuleDto
 import java.nio.file.Files
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -97,6 +101,65 @@ class DefaultChapterRepositoryTest {
         assertThat(files.read("book", "source", "one")).isNull()
     }
 
+    @Test fun catalogRefreshDuringFetchKeepsUpdatedTitleAndIndex() = runBlocking {
+        val dao = FakeChapterDao(chapter("one", 0))
+        val repository = DefaultChapterRepository(dao, AtomicChapterFileStore(temporary.root.toPath()), {
+            dao.upsert(chapter("one", 7).copy(title = "Refreshed title"))
+            SourceResult.Success("正文")
+        })
+
+        val loaded = repository.loadChapter("book", "source", "one") as SourceResult.Success
+        val current = dao.getChapter("book", "source", "one")!!
+
+        assertThat(current.title).isEqualTo("Refreshed title")
+        assertThat(current.chapterIndex).isEqualTo(7)
+        assertThat(current.localContentState).isEqualTo("CACHED")
+        assertThat(loaded.value.chapter.title).isEqualTo("Refreshed title")
+    }
+
+    @Test fun catalogRemovalDuringFetchDoesNotResurrectChapter() = runBlocking {
+        val dao = FakeChapterDao(chapter("one", 0))
+        val repository = DefaultChapterRepository(dao, AtomicChapterFileStore(temporary.root.toPath()), {
+            dao.deleteForSource("book", "source")
+            SourceResult.Success("正文")
+        })
+
+        val result = repository.loadChapter("book", "source", "one")
+
+        assertThat(result).isInstanceOf(SourceResult.Failure::class.java)
+        assertThat(dao.getChapter("book", "source", "one")).isNull()
+    }
+
+    @Test fun concurrentLoadsKeepFileAndMetadataForTheSameVersion() = runBlocking {
+        val files = AtomicChapterFileStore(temporary.root.toPath())
+        val dao = FakeChapterDao(chapter("one", 0))
+        val firstAtMetadata = CompletableDeferred<Unit>()
+        val releaseFirst = CompletableDeferred<Unit>()
+        var updates = 0
+        dao.beforeMetadataUpdate = {
+            if (updates++ == 0) {
+                firstAtMetadata.complete(Unit)
+                releaseFirst.await()
+            }
+        }
+        val fetches = AtomicInteger()
+        val repository = DefaultChapterRepository(dao, files, {
+            SourceResult.Success("version-${fetches.incrementAndGet()}")
+        })
+
+        val first = async { repository.loadChapter("book", "source", "one") }
+        firstAtMetadata.await()
+        val second = async { repository.loadChapter("book", "source", "one") }
+        withTimeoutOrNull(500) { second.await() }
+        releaseFirst.complete(Unit)
+        first.await()
+        second.await()
+
+        val row = dao.getChapter("book", "source", "one")!!
+        assertThat(fetches.get()).isEqualTo(1)
+        assertThat(files.read("book", "source", "one", row.contentSha256)).isEqualTo("version-1")
+    }
+
     @Test fun prefetchIsBoundedAndSkipsMeteredNetworkWhenNotAllowed() = runBlocking {
         val dao = FakeChapterDao(*(0..4).map { chapter("c$it", it) }.toTypedArray())
         val files = AtomicChapterFileStore(temporary.root.toPath())
@@ -112,6 +175,55 @@ class DefaultChapterRepositoryTest {
         assertThat(repository.prefetchNext("book", "source", 0, count = 99)).isEqualTo(2)
         assertThat(fetched).containsExactly("c1", "c2").inOrder()
         assertThat(repository.prefetchNext("book", "source", 3)).isEqualTo(1)
+    }
+
+    @Test fun prefetchStopsWhenNetworkBecomesMeteredBetweenChapters() = runBlocking {
+        val dao = FakeChapterDao(*(0..2).map { chapter("c$it", it) }.toTypedArray())
+        val fetched = mutableListOf<String>()
+        var metered = false
+        val repository = DefaultChapterRepository(dao, AtomicChapterFileStore(temporary.root.toPath()),
+            { chapter ->
+                fetched += chapter.chapterId
+                metered = true
+                SourceResult.Success(chapter.chapterId)
+            }, isMeteredNetwork = { metered }, allowMeteredPrefetch = { false })
+
+        assertThat(repository.prefetchNext("book", "source", 0, count = 2)).isEqualTo(1)
+        assertThat(fetched).containsExactly("c1")
+        Unit
+    }
+
+    @Test fun prefetchRechecksMeteringAfterWaitingForChapterLock() = runBlocking {
+        val dao = FakeChapterDao(chapter("c1", 1))
+        val firstAtFetch = CompletableDeferred<Unit>()
+        val releaseFirst = CompletableDeferred<Unit>()
+        val prefetchCheckedNetwork = CompletableDeferred<Unit>()
+        var metered = false
+        val fetches = AtomicInteger()
+        val repository = DefaultChapterRepository(dao, AtomicChapterFileStore(temporary.root.toPath()),
+            { _ ->
+                if (fetches.incrementAndGet() == 1) {
+                    firstAtFetch.complete(Unit)
+                    releaseFirst.await()
+                    SourceResult.Failure(SourceFailure.Timeout)
+                } else SourceResult.Success("unexpected prefetch")
+            }, isMeteredNetwork = {
+                prefetchCheckedNetwork.complete(Unit)
+                metered
+            }, allowMeteredPrefetch = { false })
+
+        val foreground = async { repository.loadChapter("book", "source", "c1") }
+        firstAtFetch.await()
+        val prefetch = async { repository.prefetchNext("book", "source", 0, count = 1) }
+        prefetchCheckedNetwork.await()
+        metered = true
+        releaseFirst.complete(Unit)
+
+        assertThat(foreground.await()).isEqualTo(SourceResult.Failure(SourceFailure.Timeout))
+        assertThat(prefetch.await()).isEqualTo(0)
+        assertThat(fetches.get()).isEqualTo(1)
+        assertThat(dao.getChapter("book", "source", "c1")!!.localContentState).isEqualTo("NOT_STORED")
+        Unit
     }
 
     @Test fun ruleBasedFetcherUsesSavedCleartextChoiceAndParsedChapter() = runBlocking {
@@ -165,6 +277,7 @@ class DefaultChapterRepositoryTest {
 
     private class FakeChapterDao(vararg chapters: ChapterEntity) : ChapterDao {
         private val rows = chapters.associateBy { Triple(it.bookId, it.sourceId, it.chapterId) }.toMutableMap()
+        var beforeMetadataUpdate: (suspend () -> Unit)? = null
 
         override suspend fun upsertAll(chapters: List<ChapterEntity>) { chapters.forEach { upsert(it) } }
         override suspend fun upsert(chapter: ChapterEntity) {
@@ -176,6 +289,15 @@ class DefaultChapterRepositoryTest {
             rows.values.filter { it.bookId == bookId && it.sourceId == sourceId }.sortedBy { it.chapterIndex }
         override suspend fun getChapter(bookId: String, sourceId: String, chapterId: String): ChapterEntity? =
             rows[Triple(bookId, sourceId, chapterId)]
+        override suspend fun updateStoredContent(bookId: String, sourceId: String, chapterId: String,
+            expectedUrl: String, state: String, path: String, sha256: String, byteCount: Long): Int {
+            beforeMetadataUpdate?.invoke()
+            val key = Triple(bookId, sourceId, chapterId)
+            val row = rows[key]?.takeIf { it.url == expectedUrl } ?: return 0
+            rows[key] = row.copy(localContentState = state, localFilePath = path,
+                contentSha256 = sha256, contentBytes = byteCount)
+            return 1
+        }
         override suspend fun deleteForSource(bookId: String, sourceId: String) {
             rows.keys.removeAll { it.first == bookId && it.second == sourceId }
         }

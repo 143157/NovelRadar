@@ -44,6 +44,23 @@ interface ChapterDao {
     )
     suspend fun getChapter(bookId: String, sourceId: String, chapterId: String): ChapterEntity?
 
+    @Query(
+        "UPDATE chapters SET localContentState = :state, localFilePath = :path, " +
+            "contentSha256 = :sha256, contentBytes = :byteCount " +
+            "WHERE bookId = :bookId AND sourceId = :sourceId AND chapterId = :chapterId " +
+            "AND url = :expectedUrl",
+    )
+    suspend fun updateStoredContent(
+        bookId: String,
+        sourceId: String,
+        chapterId: String,
+        expectedUrl: String,
+        state: String,
+        path: String,
+        sha256: String,
+        byteCount: Long,
+    ): Int
+
     @Query("DELETE FROM chapters WHERE bookId = :bookId AND sourceId = :sourceId")
     suspend fun deleteForSource(bookId: String, sourceId: String)
 }

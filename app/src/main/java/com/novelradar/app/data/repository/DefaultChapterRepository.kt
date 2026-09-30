@@ -16,8 +16,11 @@ import com.novelradar.app.source.parse.ChapterPage
 import com.novelradar.app.source.rule.RuleDto
 import com.novelradar.app.source.rule.RuleJsonParser
 import com.novelradar.app.source.rule.RuleParseResult
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** Fetches and parses one chapter from its saved source rule. */
 fun interface ChapterContentFetcher {
@@ -61,7 +64,19 @@ class DefaultChapterRepository(
     private val isMeteredNetwork: () -> Boolean = { true },
     private val allowMeteredPrefetch: suspend () -> Boolean = { false },
 ) : ChapterRepository {
-    override suspend fun loadChapter(bookId: String, sourceId: String, chapterId: String): SourceResult<LoadedChapter> {
+    private val loadLocks = ConcurrentHashMap<ChapterKey, Mutex>()
+
+    override suspend fun loadChapter(bookId: String, sourceId: String, chapterId: String): SourceResult<LoadedChapter> =
+        loadChapter(bookId, sourceId, chapterId, prefetch = false)
+
+    private suspend fun loadChapter(bookId: String, sourceId: String, chapterId: String,
+        prefetch: Boolean): SourceResult<LoadedChapter> =
+        loadLocks.getOrPut(ChapterKey(bookId, sourceId, chapterId)) { Mutex() }.withLock {
+            loadChapterLocked(bookId, sourceId, chapterId, prefetch)
+        }
+
+    private suspend fun loadChapterLocked(bookId: String, sourceId: String, chapterId: String,
+        prefetch: Boolean): SourceResult<LoadedChapter> {
         val row = chapters.getChapter(bookId, sourceId, chapterId)
             ?: return SourceResult.Failure(SourceFailure.UnsafeRule("Chapter is not saved"))
         if (row.localContentState == LocalContentState.CACHED.name ||
@@ -80,7 +95,11 @@ class DefaultChapterRepository(
                 }
             }
         }
-        if (row.url.isNullOrBlank()) return SourceResult.Failure(SourceFailure.UnsafeRule("Chapter has no URL"))
+        val chapterUrl = row.url?.takeIf(String::isNotBlank)
+            ?: return SourceResult.Failure(SourceFailure.UnsafeRule("Chapter has no URL"))
+        if (prefetch && !prefetchPermitted()) {
+            return SourceResult.Failure(SourceFailure.UnsafeRule("Prefetch is disabled on this network"))
+        }
         val fetched = try { fetcher.fetch(row) }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { SourceResult.Failure(SourceFailure.Unexpected("Could not load chapter")) }
@@ -88,11 +107,14 @@ class DefaultChapterRepository(
             is SourceResult.Failure -> fetched
             is SourceResult.Success -> try {
                 val saved = files.write(bookId, sourceId, chapterId, fetched.value)
-                val updated = row.copy(localContentState = LocalContentState.CACHED.name,
-                    localFilePath = saved.relativePath, contentSha256 = saved.sha256,
-                    contentBytes = saved.byteCount)
-                chapters.upsert(updated)
-                SourceResult.Success(LoadedChapter(updated.toDomain(), fetched.value, ChapterOrigin.Network))
+                val changed = chapters.updateStoredContent(bookId, sourceId, chapterId, chapterUrl,
+                    LocalContentState.CACHED.name, saved.relativePath, saved.sha256, saved.byteCount)
+                if (changed == 0) SourceResult.Failure(SourceFailure.UnsafeRule("Chapter changed while loading"))
+                else {
+                    val updated = chapters.getChapter(bookId, sourceId, chapterId)
+                    if (updated == null) SourceResult.Failure(SourceFailure.UnsafeRule("Chapter changed while loading"))
+                    else SourceResult.Success(LoadedChapter(updated.toDomain(), fetched.value, ChapterOrigin.Network))
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -102,18 +124,23 @@ class DefaultChapterRepository(
     }
 
     override suspend fun prefetchNext(bookId: String, sourceId: String, chapterIndex: Int, count: Int): Int {
-        val permitted = try { !isMeteredNetwork() || allowMeteredPrefetch() }
-        catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { false }
-        if (!permitted) return 0
         var loaded = 0
         for (chapter in chapters.getChapters(bookId, sourceId)
             .filter { it.chapterIndex > chapterIndex }
             .sortedWith(compareBy(ChapterEntity::chapterIndex, ChapterEntity::chapterId))
             .take(count.coerceIn(0, MAX_PREFETCH_COUNT))) {
-            if (loadChapter(bookId, sourceId, chapter.chapterId) is SourceResult.Success) loaded++
+            if (!prefetchPermitted()) break
+            if (loadChapter(bookId, sourceId, chapter.chapterId, prefetch = true) is SourceResult.Success) loaded++
         }
         return loaded
+    }
+
+    private suspend fun prefetchPermitted(): Boolean = try {
+        !isMeteredNetwork() || allowMeteredPrefetch()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        false
     }
 
     private fun ChapterEntity.toDomain() = Chapter(bookId, sourceId, chapterId, chapterIndex, title, url,
@@ -122,4 +149,6 @@ class DefaultChapterRepository(
     private companion object {
         const val MAX_PREFETCH_COUNT = 2
     }
+
+    private data class ChapterKey(val bookId: String, val sourceId: String, val chapterId: String)
 }
