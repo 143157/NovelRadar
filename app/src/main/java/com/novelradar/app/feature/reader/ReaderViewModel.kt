@@ -11,6 +11,7 @@ import com.novelradar.app.domain.repository.ReaderSettingsRepository
 import com.novelradar.app.domain.repository.ReadingLocation
 import com.novelradar.app.domain.repository.ReadingProgressRepository
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
@@ -33,6 +34,7 @@ class ReaderViewModel(
     private val settings: ReaderSettingsRepository,
     private val progress: ReadingProgressRepository,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val onInitialChapterLoaded: () -> Unit = {},
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(ReaderUiState())
     val uiState: StateFlow<ReaderUiState> = mutableState.asStateFlow()
@@ -43,6 +45,7 @@ class ReaderViewModel(
     private var retryChapterId: String? = null
     private var retryOffset = 0
     private var lastEventTime = Long.MIN_VALUE
+    private var initialEntryPending = initialChapterId != null
 
     init {
         viewModelScope.launch {
@@ -121,6 +124,10 @@ class ReaderViewModel(
                     }
                     mutableState.update { it.copy(content = loaded, loading = false, error = null,
                         offset = offset.coerceIn(0, loaded.content.length), positionVersion = it.positionVersion + 1) }
+                    if (initialEntryPending) {
+                        initialEntryPending = false
+                        onInitialChapterLoaded()
+                    }
                     saveExact()
                     val count = mutableState.value.preferences.prefetchCount.coerceIn(0, 2)
                     prefetchJob?.cancel()
@@ -163,7 +170,12 @@ class ReaderViewModel(
         }
     }
 
-    fun saveOnStop() { viewModelScope.launch { withContext(NonCancellable) { saveExact() } } }
+    fun saveOnStop() {
+        // Enter the protected save before route disposal can clear the ViewModelStore.
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            withContext(NonCancellable) { saveExact() }
+        }
+    }
 
     suspend fun close(): Boolean {
         loadJob?.cancelAndJoin()

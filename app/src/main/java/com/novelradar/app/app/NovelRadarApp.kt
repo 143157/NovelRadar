@@ -3,6 +3,7 @@ package com.novelradar.app.app
 import android.net.Uri
 import android.security.NetworkSecurityPolicy
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -32,8 +33,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.ViewModelStore
-import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -45,6 +44,7 @@ import com.novelradar.app.feature.book.BookDetailViewModel
 import com.novelradar.app.domain.model.ReaderPreferences
 import com.novelradar.app.feature.reader.ReaderScreen
 import com.novelradar.app.feature.reader.ReaderViewModel
+import com.novelradar.app.feature.reader.ReaderSessionViewModel
 import com.novelradar.app.feature.reader.readerColors
 import com.novelradar.app.feature.search.SearchScreen
 import com.novelradar.app.feature.search.SearchViewModel
@@ -147,7 +147,8 @@ fun NovelRadarApp(container: AppContainer, bootstrapState: StateFlow<SourceBoots
         val modifier = Modifier.fillMaxSize().padding(contentPadding)
         when {
             selectedBookId != null && readerSourceId != null -> ReaderRoute(requireNotNull(selectedBookId), requireNotNull(readerSourceId),
-                readerChapterId, readerSession, container, { readerSourceId = null; readerChapterId = null }, modifier)
+                readerChapterId, readerSession, container, { readerSourceId = null; readerChapterId = null },
+                { readerChapterId = null }, modifier)
             selectedBookId != null -> BookDetailRoute(requireNotNull(selectedBookId), container, { selectedBookId = null },
                 { sourceId, chapterId -> readerSourceId = sourceId; readerChapterId = chapterId; readerSession++ }, modifier)
             selectedIndex == 1 -> SearchScreen(
@@ -204,22 +205,28 @@ private fun BookDetailRoute(bookId: String, container: AppContainer, onBack: () 
 
 @Composable
 private fun ReaderRoute(bookId: String, sourceId: String, chapterId: String?, session: Int,
-    container: AppContainer, onBack: () -> Unit, modifier: Modifier) {
-    val owner = remember(bookId, sourceId, session) {
-        object : ViewModelStoreOwner { override val viewModelStore = ViewModelStore() }
-    }
+    container: AppContainer, onBack: () -> Unit, onInitialChapterLoaded: () -> Unit, modifier: Modifier) {
+    // The Activity retains this session owner during configuration changes, including
+    // when the exact progress write is still pending in storage.
+    val owner: ReaderSessionViewModel = viewModel(key = "reader:$bookId:$sourceId:$session")
+    val activity = LocalActivity.current
     val factory = remember(bookId, sourceId, chapterId, container) {
         object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 require(modelClass == ReaderViewModel::class.java)
                 @Suppress("UNCHECKED_CAST")
                 return ReaderViewModel(bookId, sourceId, chapterId, container.catalog,
-                    container.chapters, container.readerSettings, container.readingProgress) as T
+                    container.chapters, container.readerSettings, container.readingProgress,
+                    onInitialChapterLoaded = onInitialChapterLoaded) as T
             }
         }
     }
     val model: ReaderViewModel = viewModel(viewModelStoreOwner = owner, factory = factory)
     val state by model.uiState.collectAsStateWithLifecycle()
+    // A retained model may finish loading between the old and new compositions.
+    LaunchedEffect(model, state.content != null) {
+        if (state.content != null) onInitialChapterLoaded()
+    }
     val scope = rememberCoroutineScope()
     var exiting by remember { mutableStateOf(false) }
     val leave: () -> Unit = {
@@ -232,7 +239,11 @@ private fun ReaderRoute(bookId: String, sourceId: String, chapterId: String?, se
     DisposableEffect(model, lifecycle) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) model.saveOnStop() }
         lifecycle.addObserver(observer)
-        onDispose { lifecycle.removeObserver(observer); model.saveOnStop(); owner.viewModelStore.clear() }
+        onDispose {
+            lifecycle.removeObserver(observer)
+            model.saveOnStop()
+            if (activity?.isChangingConfigurations != true) owner.viewModelStore.clear()
+        }
     }
     BackHandler(onBack = leave)
     val chapterKey = state.content?.chapter?.chapterId

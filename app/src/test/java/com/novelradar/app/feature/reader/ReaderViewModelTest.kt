@@ -1,6 +1,10 @@
 package com.novelradar.app.feature.reader
 
 import com.google.common.truth.Truth.assertThat
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStoreOwner
 import com.novelradar.app.domain.model.Book
 import com.novelradar.app.domain.model.BookSource
 import com.novelradar.app.domain.model.Chapter
@@ -61,6 +65,122 @@ class ReaderViewModelTest {
         val vm = fixture.create("c1")
         advanceUntilIdle()
         assertThat(vm.uiState.value.offset).isEqualTo(0)
+    }
+
+    @Test fun explicitEntryIsConsumedOnlyAfterContentArrives() = runTest {
+        val fixture = Fixture()
+        val gate = CompletableDeferred<Unit>()
+        fixture.chapters.gate = gate
+        var consumed = 0
+        val vm = fixture.create("c1") { consumed++ }
+        runCurrent()
+        assertThat(consumed).isEqualTo(0)
+        assertThat(vm.uiState.value.content).isNull()
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertThat(consumed).isEqualTo(1)
+        vm.nextChapter()
+        advanceUntilIdle()
+        assertThat(consumed).isEqualTo(1)
+    }
+
+    @Test fun failedInitialEntryRemainsPendingUntilRetrySucceeds() = runTest {
+        val fixture = Fixture()
+        fixture.chapters.failed = "c1"
+        var pending: String? = "c1"
+        val vm = fixture.create(pending) { pending = null }
+        advanceUntilIdle()
+        assertThat(pending).isEqualTo("c1")
+        fixture.chapters.failed = null
+        vm.retry()
+        advanceUntilIdle()
+        assertThat(pending).isNull()
+    }
+
+    @Test fun recreationAfterExplicitEntryRestoresCurrentChapterAndOffset() = runTest {
+        val fixture = Fixture()
+        var pending: String? = "c0"
+        val vm = fixture.create(pending) { pending = null }
+        advanceUntilIdle()
+        vm.nextChapter()
+        advanceUntilIdle()
+        vm.onPositionChanged(47)
+        vm.saveOnStop()
+        advanceUntilIdle()
+        val recreated = fixture.create(pending) { pending = null }
+        advanceUntilIdle()
+        assertThat(recreated.uiState.value.content?.chapter?.chapterId).isEqualTo("c1")
+        assertThat(recreated.uiState.value.offset).isEqualTo(47)
+    }
+
+    @Test fun recreationWhileInitialLoadPendingKeepsRequestedChapter() = runTest {
+        val fixture = Fixture()
+        fixture.progress.initial = location("c2", 2, 55)
+        val gate = CompletableDeferred<Unit>()
+        fixture.chapters.gate = gate
+        var pending: String? = "c1"
+        val owner = ViewModelStore()
+        owner.put("reader", fixture.create(pending) { pending = null })
+        runCurrent()
+        owner.clear()
+        val recreated = fixture.create(pending) { pending = null }
+        runCurrent()
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertThat(recreated.uiState.value.content?.chapter?.chapterId).isEqualTo("c1")
+        assertThat(recreated.uiState.value.offset).isEqualTo(0)
+        assertThat(pending).isNull()
+    }
+
+    @Test fun retainedSessionKeepsPositionWhileStorageWriteIsPending() = runTest {
+        val fixture = Fixture()
+        val activityStore = ViewModelStore()
+        val activityOwner = object : ViewModelStoreOwner { override val viewModelStore = activityStore }
+        val sessionFactory = object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                @Suppress("UNCHECKED_CAST")
+                return ReaderSessionViewModel() as T
+            }
+        }
+        val session = ViewModelProvider(activityOwner, sessionFactory)["reader:1", ReaderSessionViewModel::class.java]
+        val vm = fixture.create("c0")
+        session.viewModelStore.put("reader", vm)
+        advanceUntilIdle()
+        vm.nextChapter()
+        advanceUntilIdle()
+        vm.onPositionChanged(47)
+        val gate = CompletableDeferred<Unit>()
+        fixture.progress.saveGate = gate
+        vm.saveOnStop()
+        runCurrent()
+        // A new Activity wrapper uses the retained Activity store before disk catches up.
+        val recreatedOwner = object : ViewModelStoreOwner { override val viewModelStore = activityStore }
+        val recreatedSession = ViewModelProvider(recreatedOwner, sessionFactory)["reader:1", ReaderSessionViewModel::class.java]
+        val restored = recreatedSession.viewModelStore["reader"] as ReaderViewModel
+        assertThat(restored).isSameInstanceAs(vm)
+        assertThat(restored.uiState.value.content?.chapter?.chapterId).isEqualTo("c1")
+        assertThat(restored.uiState.value.offset).isEqualTo(47)
+        assertThat(fixture.progress.initial?.offset).isEqualTo(0)
+        gate.complete(Unit)
+        advanceUntilIdle()
+        activityStore.clear()
+    }
+
+    @Test fun clearingSessionOwnerCancelsPendingReaderLoad() = runTest {
+        val fixture = Fixture()
+        val gate = CompletableDeferred<Unit>()
+        fixture.chapters.gate = gate
+        val session = ReaderSessionViewModel()
+        val activityStore = ViewModelStore()
+        activityStore.put("session", session)
+        val vm = fixture.create("c1")
+        session.viewModelStore.put("reader", vm)
+        runCurrent()
+        activityStore.clear()
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.content).isNull()
+        assertThat(fixture.progress.exact).isEmpty()
     }
 
     @Test fun nextAndPreviousRespectCatalogBoundariesAndSaveBeforeChanging() = runTest {
@@ -192,6 +312,19 @@ class ReaderViewModelTest {
         assertThat(fixture.progress.exact.last().offset).isEqualTo(39)
     }
 
+    @Test fun lifecycleStopSavesEvenWhenOwnerIsClearedImmediately() = runTest {
+        val fixture = Fixture()
+        val vm = fixture.create()
+        val owner = ViewModelStore()
+        owner.put("reader", vm)
+        advanceUntilIdle()
+        vm.onPositionChanged(39)
+        vm.saveOnStop()
+        owner.clear()
+        advanceUntilIdle()
+        assertThat(fixture.progress.exact.last().offset).isEqualTo(39)
+    }
+
     @Test fun layoutPreferenceChangeRejectsPreviousLayoutPositionEvents() = runTest {
         val fixture = Fixture()
         val vm = fixture.create()
@@ -239,8 +372,8 @@ class ReaderViewModelTest {
         val chapters = FakeChapters(catalog.list)
         val settings = FakeSettings()
         val progress = FakeProgress()
-        fun create(chapterId: String? = null) = ReaderViewModel("book", "a", chapterId,
-            catalog, chapters, settings, progress, clock = { 100L })
+        fun create(chapterId: String? = null, onInitialChapterLoaded: () -> Unit = {}) = ReaderViewModel("book", "a", chapterId,
+            catalog, chapters, settings, progress, clock = { 100L }, onInitialChapterLoaded = onInitialChapterLoaded)
     }
 
     private class FakeCatalog : CatalogRepository {
@@ -279,12 +412,15 @@ class ReaderViewModelTest {
     private class FakeProgress : ReadingProgressRepository {
         var initial: ReadingLocation? = null
         var failSave = false
+        var saveGate: CompletableDeferred<Unit>? = null
         val exact = mutableListOf<ReadingLocation>()
         val changes = mutableListOf<ReadingLocation>()
         override fun progress(bookId: String): Flow<ReadingLocation?> = MutableStateFlow(initial)
         override suspend fun saveExact(location: ReadingLocation) {
+            saveGate?.await()
             check(!failSave)
             exact += location
+            initial = location
         }
         override suspend fun collectPositionChanges(changes: Flow<ReadingLocation>) { changes.collect { this.changes += it } }
     }

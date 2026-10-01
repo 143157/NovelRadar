@@ -2,7 +2,13 @@ package com.novelradar.app.feature.reader
 
 data class TextPage(val startOffset: Int, val endOffset: Int)
 
-/** Boundaries refer to the original UTF-16 text; no whitespace or punctuation is discarded. */
+/**
+ * Boundaries refer to the original UTF-16 text; no whitespace or punctuation is discarded.
+ * Page length is bounded by maxCharsPerPage (clamped to at least one UTF-16 unit),
+ * except that a capacity of one allows a single supplementary code point to occupy
+ * two units so its surrogate pair stays intact. The bound is therefore at most two
+ * units for that single-code-point exception.
+ */
 object TextPaginator {
     fun paginate(text: String, maxCharsPerPage: Int): List<TextPage> {
         val capacity = maxCharsPerPage.coerceAtLeast(1)
