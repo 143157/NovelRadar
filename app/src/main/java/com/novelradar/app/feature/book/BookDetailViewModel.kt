@@ -25,6 +25,8 @@ class BookDetailViewModel(
         viewModelScope, SharingStarted.WhileSubscribed(5_000), BookDetailUiState(),
     )
     private var catalogJob: Job? = null
+    // Source writes and shelf additions retain click order, even when storage is slow.
+    private var sourceActionJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -32,11 +34,11 @@ class BookDetailViewModel(
                 val book = catalog.book(bookId)
                 val sources = catalog.sources(bookId).first()
                 val sourceNames = catalog.sourceNames()
+                val preferred = books.preferredSource(bookId)
                 mutableState.update { it.copy(book = book, sources = sources,
                     sourceNames = sourceNames, loading = false) }
-                val preferred = books.preferredSource(bookId)
                 (sources.firstOrNull { it.sourceId == preferred } ?: sources.firstOrNull())
-                    ?.let { selectSource(it.sourceId) }
+                    ?.let { showSource(it.sourceId) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -47,9 +49,24 @@ class BookDetailViewModel(
 
     fun selectSource(sourceId: String) {
         if (mutableState.value.sources.none { it.sourceId == sourceId }) return
+        val previous = sourceActionJob
+        sourceActionJob = viewModelScope.launch {
+            previous?.join()
+            try {
+                books.selectPreferredSource(bookId, sourceId)
+                showSource(sourceId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                mutableState.update { it.copy(notice = "书源选择保存失败，请重试") }
+            }
+        }
+    }
+
+    private fun showSource(sourceId: String) {
         catalogJob?.cancel()
         mutableState.update { it.copy(selectedSourceId = sourceId, chapters = emptyList(), loading = true,
-            refreshing = false, warning = null) }
+            refreshing = false, warning = null, notice = null) }
         load(sourceId, force = false)
     }
 
@@ -81,7 +98,9 @@ class BookDetailViewModel(
     fun toggleChapterOrder() { mutableState.update { it.copy(reversed = !it.reversed) } }
 
     fun addToShelf() {
-        viewModelScope.launch {
+        val previous = sourceActionJob
+        sourceActionJob = viewModelScope.launch {
+            previous?.join()
             try {
                 val sourceId = mutableState.value.selectedSourceId ?: return@launch
                 books.addToShelf(bookId, clock(), sourceId)

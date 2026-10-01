@@ -82,6 +82,41 @@ class RoomBookRepositoryTest {
         assertThat(failure.exceptionOrNull()).isInstanceOf(IllegalArgumentException::class.java)
     }
 
+    @Test fun firstShelfAddAndReAddRecoverExistingOwnedReadingHistory() = runTest {
+        val book = repository.saveSearchHit(hit("source-a"))
+        val location = ReadingLocation(book.bookId, "source-a", "chapter-2", 1, 55, 200L)
+        repository.saveProgress(location)
+        repository.addToShelf(book.bookId, 300L)
+        var shelf = repository.observeShelf().first().single()
+        assertThat(shelf.lastReadAtEpochMillis).isEqualTo(200L)
+        assertThat(shelf.preferredSourceId).isEqualTo("source-a")
+        repository.removeFromShelf(book.bookId)
+        repository.addToShelf(book.bookId, 500L)
+        shelf = repository.observeShelf().first().single()
+        assertThat(shelf.lastReadAtEpochMillis).isEqualTo(200L)
+        assertThat(repository.progress(book.bookId).first()).isEqualTo(location)
+    }
+
+    @Test fun freshShelfAddIgnoresForeignLegacySourceAndKeepsExplicitChoice() = runTest {
+        val book = repository.saveSearchHit(hit("source-a"))
+        dao.upsertProgress(ReadingProgressEntity(book.bookId, "foreign", "chapter-2", 1, 55, 200L))
+        repository.addToShelf(book.bookId, 300L, "source-a")
+        val shelf = repository.observeShelf().first().single()
+        assertThat(shelf.lastReadAtEpochMillis).isNull()
+        assertThat(shelf.preferredSourceId).isEqualTo("source-a")
+    }
+
+    @Test fun pickerSelectionRetainsOldSourceLocationAndUpdatesShelfChoice() = runTest {
+        val book = repository.saveSearchHit(hit("source-a"))
+        repository.saveSearchHit(hit("source-b"))
+        repository.addToShelf(book.bookId, 100L, "source-a")
+        val location = ReadingLocation(book.bookId, "source-a", "chapter-2", 1, 55, 200L)
+        repository.saveProgress(location)
+        repository.selectPreferredSource(book.bookId, "source-b")
+        assertThat(repository.observeShelf().first().single().preferredSourceId).isEqualTo("source-b")
+        assertThat(repository.progress(book.bookId).first()).isEqualTo(location)
+    }
+
     private fun hit(sourceId: String) = SearchHit(
         sourceId = sourceId,
         bookName = "测试小说",
@@ -125,6 +160,7 @@ class RoomBookRepositoryTest {
         }
         override fun progress(bookId: String): Flow<ReadingProgressEntity?> =
             progresses.map { rows -> rows.firstOrNull { it.bookId == bookId } }
+        override suspend fun getProgress(bookId: String) = progresses.value.firstOrNull { it.bookId == bookId }
         override suspend fun deleteBook(bookId: String) { books.remove(bookId) }
     }
 }

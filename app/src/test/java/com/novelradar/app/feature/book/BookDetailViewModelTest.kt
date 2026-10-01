@@ -12,6 +12,7 @@ import com.novelradar.app.domain.repository.CatalogResult
 import com.novelradar.app.domain.repository.ReadingLocation
 import com.novelradar.app.domain.repository.ShelfBook
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,6 +21,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.setMain
 import org.junit.Rule
 import org.junit.Test
@@ -82,6 +84,71 @@ class BookDetailViewModelTest {
         assertThat(books.preferred).isEqualTo("a")
     }
 
+    @Test fun choosingSourcePersistsBeforeReadingAndReopening() = runTest {
+        val books = FakeBooks().apply { preferred = "a" }
+        val vm = BookDetailViewModel("book-1", FakeCatalog(), books)
+        backgroundScope.launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+        vm.selectSource("b")
+        advanceUntilIdle()
+        assertThat(books.preferred).isEqualTo("b")
+        val reopened = BookDetailViewModel("book-1", FakeCatalog(), books)
+        backgroundScope.launch { reopened.uiState.collect {} }
+        advanceUntilIdle()
+        assertThat(reopened.uiState.value.selectedSourceId).isEqualTo("b")
+    }
+
+    @Test fun failedSourceSelectionKeepsCommittedSourceAndCatalogAndShowsNotice() = runTest {
+        val books = FakeBooks().apply { preferred = "a" }
+        val vm = BookDetailViewModel("book-1", FakeCatalog(), books)
+        backgroundScope.launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+        books.beforeSelection = { error("disk full") }
+        vm.selectSource("b")
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.selectedSourceId).isEqualTo("a")
+        assertThat(vm.uiState.value.chapters).hasSize(2)
+        assertThat(vm.uiState.value.notice).isEqualTo("书源选择保存失败，请重试")
+        assertThat(books.preferred).isEqualTo("a")
+    }
+
+    @Test fun slowSelectionThenNewChoiceAndImmediateShelfAddRemainOrdered() = runTest {
+        val books = FakeBooks().apply { preferred = "a" }
+        val vm = BookDetailViewModel("book-1", FakeCatalog(), books)
+        backgroundScope.launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        books.beforeSelection = { source -> if (source == "b") { started.complete(Unit); release.await() } }
+        vm.selectSource("b")
+        runCurrent()
+        assertThat(started.isCompleted).isTrue()
+        vm.selectSource("a")
+        vm.addToShelf()
+        runCurrent()
+        assertThat(books.addedSource).isNull()
+        release.complete(Unit)
+        advanceUntilIdle()
+        assertThat(books.preferred).isEqualTo("a")
+        assertThat(vm.uiState.value.selectedSourceId).isEqualTo("a")
+        assertThat(books.addedSource).isEqualTo("a")
+    }
+
+    @Test fun pickerWaitsForInitialPreferenceRestoreToAvoidOverwritingNewChoice() = runTest {
+        val release = CompletableDeferred<Unit>()
+        val books = FakeBooks().apply { preferred = "a"; beforePreferred = { release.await() } }
+        val vm = BookDetailViewModel("book-1", FakeCatalog(), books)
+        backgroundScope.launch { vm.uiState.collect {} }
+        runCurrent()
+        assertThat(vm.uiState.value.sources).isEmpty()
+        release.complete(Unit)
+        advanceUntilIdle()
+        vm.selectSource("b")
+        advanceUntilIdle()
+        assertThat(books.preferred).isEqualTo("b")
+        assertThat(vm.uiState.value.selectedSourceId).isEqualTo("b")
+    }
+
     private class FakeCatalog : CatalogRepository {
         var failRefresh = false
         override suspend fun book(bookId: String) = Book("book-1", "星河旅人|叶子", "星河旅人", "叶子")
@@ -105,8 +172,12 @@ class BookDetailViewModelTest {
         var added: String? = null
         var addedSource: String? = null
         var preferred: String? = null
-        override suspend fun preferredSource(bookId: String) = preferred
-        override suspend fun selectPreferredSource(bookId: String, sourceId: String) { preferred = sourceId }
+        var beforeSelection: suspend (String) -> Unit = {}
+        var beforePreferred: suspend () -> Unit = {}
+        override suspend fun preferredSource(bookId: String): String? { beforePreferred(); return preferred }
+        override suspend fun selectPreferredSource(bookId: String, sourceId: String) {
+            beforeSelection(sourceId); preferred = sourceId
+        }
         override suspend fun addToShelf(bookId: String, atEpochMillis: Long, sourceId: String) {
             added = bookId; addedSource = sourceId; preferred = sourceId
         }

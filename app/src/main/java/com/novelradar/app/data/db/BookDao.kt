@@ -48,8 +48,12 @@ interface BookDao {
         requireNotNull(getBook(bookId)) { "Unknown book" }
         if (sourceId != null) requireNotNull(getSource(bookId, sourceId)) { "Source does not belong to book" }
         val old = getShelfEntry(bookId)
+        val location = if (old == null) getProgress(bookId)?.takeIf {
+            getSource(bookId, it.sourceId) != null
+        } else null
         upsertShelfEntry(old?.copy(preferredSourceId = sourceId ?: old.preferredSourceId)
-            ?: ShelfEntryEntity(bookId, at, preferredSourceId = sourceId))
+            ?: ShelfEntryEntity(bookId, at, lastReadAtEpochMillis = location?.updatedAtEpochMillis,
+                preferredSourceId = sourceId ?: location?.sourceId))
     }
 
     @Transaction
@@ -107,6 +111,9 @@ interface BookDao {
 
     @Query("SELECT * FROM reading_progress WHERE bookId = :bookId LIMIT 1")
     fun progress(bookId: String): Flow<ReadingProgressEntity?>
+
+    @Query("SELECT * FROM reading_progress WHERE bookId = :bookId LIMIT 1")
+    suspend fun getProgress(bookId: String): ReadingProgressEntity?
 
     @Query("DELETE FROM books WHERE bookId = :bookId")
     suspend fun deleteBook(bookId: String)
