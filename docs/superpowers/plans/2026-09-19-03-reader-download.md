@@ -180,29 +180,29 @@ Implementation evidence (2026-10-01): Task 2 is committed in `e9bdd42` and `28b7
 - Test: `app/src/test/java/com/novelradar/app/feature/reader/ReaderViewModelTest.kt`
 - Test: `app/src/androidTest/java/com/novelradar/app/feature/reader/ReaderScreenTest.kt`
 
-- [ ] **Step 1: Write failing paginator tests**
+- [x] **Step 1: Write failing paginator tests**
 
 Test empty text, paragraphs, Chinese punctuation line breaks, narrow width, font change invalidation, no dropped characters, and page offsets joining back to the original text.
 
-- [ ] **Step 2: Verify failure**
+- [x] **Step 2: Verify failure**
 
 Run: `.\gradlew.bat :app:testDebugUnitTest --tests "*.TextPaginatorTest"`
 
 Expected: FAIL.
 
-- [ ] **Step 3: Implement pagination as a pure boundary calculator**
+- [x] **Step 3: Implement pagination as a pure boundary calculator**
 
 `TextPaginator.paginate(text, maxCharsPerPage)` returns `List<TextPage(startOffset, endOffset)>`; it prefers newline or Chinese sentence punctuation within the last 20% of a page but falls back to the hard boundary. Compose computes `maxCharsPerPage` from measured width/height and text style, then the pure paginator guarantees stable offsets.
 
-- [ ] **Step 4: Write ViewModel tests and implement reading state**
+- [x] **Step 4: Write ViewModel tests and implement reading state**
 
 Cover load, cached/network origin, next/previous chapter, exact end/start behavior, retry, settings update, progress restore, progress save, and two-chapter prefetch. `ReaderUiState` must distinguish loading, content, and error without erasing the last successful chapter during refresh.
 
-- [ ] **Step 5: Implement the reader UI**
+- [x] **Step 5: Implement the reader UI**
 
 Tap the middle zone to toggle controls; side zones turn pages only in paged mode. Controls provide catalog, brightness, font, theme, mode, and more settings. Apply paper/day/night colors, system-bar colors, keep-screen-on while visible, and the selected brightness without changing system settings. Scroll mode uses a lazy text container; paged mode uses `HorizontalPager` and stable character offsets.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run:
 
@@ -217,6 +217,8 @@ Expected: PASS/compile success.
 git add app/src/main/java/com/novelradar/app/feature/reader app/src/test app/src/androidTest
 git commit -m "feat: add persistent novel reader"
 ```
+
+Task 4 implementation evidence (2026-10-01): committed in `9bb86f8`, `ff26e27`, and `cac3d5a`; specification and code-quality reviews passed after the lifecycle/recreation fixes. Full verification ran 236 unit tests with zero failures/errors, plus successful `lintDebug`, `assembleDebug`, and `compileDebugAndroidTestSources`. Explicit catalog entry opens at offset zero only for a fresh navigation; the Activity retains the active reader across configuration changes, including pending loads and delayed progress writes. Exact stop saves enter their non-cancellable section before store cleanup. A capacity-one paginator page may contain two UTF-16 units to preserve a supplementary code point intact. Android runtime tests remain unexecuted; see `docs/device-verification-notes.md`.
 
 ## Task 5: Build the bookshelf and update indicators
 
