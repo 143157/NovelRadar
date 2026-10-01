@@ -61,7 +61,7 @@ GET 搜索：
 | `book` | 可选详情字段，例如 `bookName`, `author`, `intro`, `category`, `coverUrl`, `latestChapter`, `lastUpdateTime`, `status`。`book.url` 是从详情 URL 提取书籍 ID 的正则表达式，**不是**请求 URL。 |
 | `toc` | `item` 必填，选中章节链接；可选 `list`, `url`, `baseUri`, `pagination`, `nextPage`, `isDesc`。`toc.url` 非空时须包含 `%s`。 |
 | `chapter` | `title`、`content` 必填；可选 `paragraphTag`, `paragraphTagClosed`, `filterTag`, `filterTxt`, `pagination`, `nextPage`。 |
-| `crawl` | 可选抓取提示，包括 `concurrency`, `minInterval`, `maxInterval`, `maxAttempts`, `retryMinInterval`, `retryMaxInterval`；间隔单位为秒，不构成绕过站点限流的授权。 |
+| `crawl` | 可选抓取提示，包括 `concurrency`, `minInterval`, `maxInterval`, `maxAttempts`, `retryMinInterval`, `retryMaxInterval`；间隔单位为毫秒（例如 1000 表示一秒），与本项目参考的 SoNovel 程序实际休眠行为一致；原模板中的“秒”注释与该程序实现不符，核对记录见 [书源验证笔记](source-verification-notes.md)。配置不构成绕过站点限流的授权。 |
 
 标量与列表选择器支持 jsoup CSS 或以 `/` 开始的 XPath。`search.result` 先定位结果项，再相对结果项提取书名等字段。普通元素取可见文本；章节内容取内部 HTML；`a` 取绝对 `href`，`img` 取绝对 `src`，`meta` 取 `content`。相对链接按响应页 URL 解析为绝对 URL。XPath 不加载外部实体或 DTD。选择器以 UTF-8 计最多 2 KiB。
 
