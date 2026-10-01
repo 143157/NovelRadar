@@ -260,6 +260,30 @@ class ReaderViewModelTest {
         assertThat(vm.uiState.value.notice).isNotNull()
     }
 
+    @Test fun recoveredExactSaveClearsItsFailureNotice() = runTest {
+        val fixture = Fixture()
+        val vm = fixture.create()
+        advanceUntilIdle()
+        fixture.progress.failSave = true
+        assertThat(vm.saveExact()).isFalse()
+        assertThat(vm.uiState.value.notice).isEqualTo("阅读位置保存失败，请重试返回")
+        fixture.progress.failSave = false
+        assertThat(vm.saveExact()).isTrue()
+        assertThat(vm.uiState.value.notice).isNull()
+    }
+
+    @Test fun successfulExactSavePreservesOtherFailureNotices() = runTest {
+        val fixture = Fixture()
+        val vm = fixture.create()
+        advanceUntilIdle()
+        fixture.settings.failUpdate = true
+        vm.updatePreferences { it.copy(fontSizeSp = 28f) }
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.notice).isEqualTo("设置保存失败，请重试")
+        assertThat(vm.saveExact()).isTrue()
+        assertThat(vm.uiState.value.notice).isEqualTo("设置保存失败，请重试")
+    }
+
     @Test fun waitsForPersistedPreferencesBeforeFirstChapterPrefetch() = runTest {
         val fixture = Fixture()
         val gate = CompletableDeferred<ReaderPreferences>()
@@ -367,6 +391,63 @@ class ReaderViewModelTest {
         assertThat(fixture.progress.exact.last().offset).isEqualTo(27)
     }
 
+    @Test fun failedCloseAfterCancellingLoadKeepsChapterNavigationAvailable() = runTest {
+        val fixture = Fixture()
+        val vm = fixture.create()
+        advanceUntilIdle()
+        vm.nextChapter()
+        advanceUntilIdle()
+        val gate = CompletableDeferred<Unit>()
+        fixture.chapters.gate = gate
+        vm.nextChapter()
+        runCurrent()
+        assertThat(vm.uiState.value.loading).isTrue()
+        fixture.progress.failSave = true
+        assertThat(vm.close()).isFalse()
+        assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c1")
+        assertThat(vm.uiState.value.loading).isFalse()
+        assertThat(vm.uiState.value.canPrevious).isTrue()
+        assertThat(vm.uiState.value.canNext).isTrue()
+        fixture.progress.failSave = false
+        gate.complete(Unit)
+        vm.nextChapter()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c2")
+    }
+
+    @Test fun reusedActivitySessionOwnerCreatesFreshReaderAfterNavigation() = runTest {
+        val fixture = Fixture()
+        val activityStore = ViewModelStore()
+        val activityOwner = object : ViewModelStoreOwner { override val viewModelStore = activityStore }
+        val factory = object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                @Suppress("UNCHECKED_CAST")
+                return if (modelClass == ReaderSessionViewModel::class.java) ReaderSessionViewModel() as T
+                else fixture.create("c1") as T
+            }
+        }
+        val provider = ViewModelProvider(activityOwner, factory)
+        val owner = provider["reader-session", ReaderSessionViewModel::class.java]
+        val first = ViewModelProvider(owner, factory)["reader:book:a:1", ReaderViewModel::class.java]
+        advanceUntilIdle()
+        first.onPositionChanged(48)
+        assertThat(first.close()).isTrue()
+        owner.viewModelStore.clear()
+        val nextOwner = provider["reader-session", ReaderSessionViewModel::class.java]
+        val second = ViewModelProvider(nextOwner, factory)["reader:book:a:2", ReaderViewModel::class.java]
+        advanceUntilIdle()
+        assertThat(nextOwner).isSameInstanceAs(owner)
+        assertThat(second).isNotSameInstanceAs(first)
+        assertThat(second.uiState.value.content?.chapter?.chapterId).isEqualTo("c1")
+        assertThat(second.uiState.value.offset).isEqualTo(0)
+        assertThat(activityStore.keys()).containsExactly("reader-session")
+        val recreatedOwner = object : ViewModelStoreOwner { override val viewModelStore = activityStore }
+        val restoredOwner = ViewModelProvider(recreatedOwner, factory)["reader-session", ReaderSessionViewModel::class.java]
+        val restored = ViewModelProvider(restoredOwner, factory)["reader:book:a:2", ReaderViewModel::class.java]
+        assertThat(restored).isSameInstanceAs(second)
+        activityStore.clear()
+    }
+
     private class Fixture {
         val catalog = FakeCatalog()
         val chapters = FakeChapters(catalog.list)
@@ -404,9 +485,13 @@ class ReaderViewModelTest {
     }
 
     private class FakeSettings : ReaderSettingsRepository {
+        var failUpdate = false
         val value = MutableStateFlow(ReaderPreferences())
         override val preferences: Flow<ReaderPreferences> = value
-        override suspend fun update(transform: (ReaderPreferences) -> ReaderPreferences) { value.value = transform(value.value).normalized() }
+        override suspend fun update(transform: (ReaderPreferences) -> ReaderPreferences) {
+            check(!failUpdate)
+            value.value = transform(value.value).normalized()
+        }
     }
 
     private class FakeProgress : ReadingProgressRepository {

@@ -206,9 +206,9 @@ private fun BookDetailRoute(bookId: String, container: AppContainer, onBack: () 
 @Composable
 private fun ReaderRoute(bookId: String, sourceId: String, chapterId: String?, session: Int,
     container: AppContainer, onBack: () -> Unit, onInitialChapterLoaded: () -> Unit, modifier: Modifier) {
-    // The Activity retains this session owner during configuration changes, including
-    // when the exact progress write is still pending in storage.
-    val owner: ReaderSessionViewModel = viewModel(key = "reader:$bookId:$sourceId:$session")
+    // One Activity owner is reused across entries; its nested store is cleared on departure.
+    // Configuration changes retain the current reader even while its disk write is pending.
+    val owner: ReaderSessionViewModel = viewModel(key = "reader-session")
     val activity = LocalActivity.current
     val factory = remember(bookId, sourceId, chapterId, container) {
         object : ViewModelProvider.Factory {
@@ -221,7 +221,8 @@ private fun ReaderRoute(bookId: String, sourceId: String, chapterId: String?, se
             }
         }
     }
-    val model: ReaderViewModel = viewModel(viewModelStoreOwner = owner, factory = factory)
+    val model: ReaderViewModel = viewModel(key = "reader:$bookId:$sourceId:$session",
+        viewModelStoreOwner = owner, factory = factory)
     val state by model.uiState.collectAsStateWithLifecycle()
     // A retained model may finish loading between the old and new compositions.
     LaunchedEffect(model, state.content != null) {

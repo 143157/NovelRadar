@@ -4,7 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 
-/** Owns reader models for one navigation session across Activity recreation. */
+/** Reused Activity owner for the active reader session across configuration changes. */
 class ReaderSessionViewModel : ViewModel(), ViewModelStoreOwner {
     override val viewModelStore = ViewModelStore()
 

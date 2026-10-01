@@ -162,10 +162,11 @@ class ReaderViewModel(
         if (mutableState.value.content == null) return true
         return try {
             progress.saveExact(location(mutableState.value.offset))
+            mutableState.update { if (it.notice == SAVE_FAILURE_NOTICE) it.copy(notice = null) else it }
             true
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) {
-            mutableState.update { it.copy(notice = "阅读位置保存失败，请重试返回") }
+            mutableState.update { it.copy(notice = SAVE_FAILURE_NOTICE) }
             false
         }
     }
@@ -180,6 +181,7 @@ class ReaderViewModel(
     suspend fun close(): Boolean {
         loadJob?.cancelAndJoin()
         prefetchJob?.cancelAndJoin()
+        mutableState.update { it.copy(loading = false) }
         return saveExact()
     }
 
@@ -212,5 +214,9 @@ class ReaderViewModel(
             next.horizontalMarginDp != previous.horizontalMarginDp || next.mode != previous.mode
         mutableState.update { it.copy(preferences = next,
             positionVersion = if (layoutChanged) it.positionVersion + 1 else it.positionVersion) }
+    }
+
+    private companion object {
+        const val SAVE_FAILURE_NOTICE = "阅读位置保存失败，请重试返回"
     }
 }
