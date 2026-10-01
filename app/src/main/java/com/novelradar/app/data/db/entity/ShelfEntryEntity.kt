@@ -20,4 +20,5 @@ data class ShelfEntryEntity(
     val addedAtEpochMillis: Long,
     val lastReadAtEpochMillis: Long? = null,
     val hasUpdate: Boolean = false,
+    val preferredSourceId: String? = null,
 )

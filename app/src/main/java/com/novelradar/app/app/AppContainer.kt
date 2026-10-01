@@ -56,7 +56,7 @@ class AppContainer(
         appContext,
         NovelDatabase::class.java,
         NovelDatabase.NAME,
-    ).build()
+    ).addMigrations(NovelDatabase.MIGRATION_1_2).build()
 
     val httpClient = OkHttpClient()
     val ruleParser = RuleJsonParser()
@@ -91,9 +91,13 @@ class AppContainer(
     }
     val aggregateSearch = AggregateSearchUseCase(sourceRules, sourceSearch, ruleParser)
     val testSource = TestSourceUseCase(sourceSearch, ruleParser)
+    private val chapterFiles = AtomicChapterFileStore(appContext.filesDir.toPath())
+    val localChapterCleaner = com.novelradar.app.data.files.LocalChapterCleaner(
+        chapterFiles, database.chapterDao()::clearStoredMetadata)
+    val coverFetcher = com.novelradar.app.data.repository.SafeCoverFetcher(SourceHttpClient(httpClient))
     val chapters: ChapterRepository = DefaultChapterRepository(
         chapters = database.chapterDao(),
-        files = AtomicChapterFileStore(appContext.filesDir.toPath()),
+        files = chapterFiles,
         fetcher = RuleBasedChapterContentFetcher(sourceRules,
             ChapterPageFetcher { rule, sourceId, url, allowCleartext ->
                 sourceEngine.chapter(rule, sourceId, url, allowCleartext)
@@ -109,6 +113,7 @@ class AppContainer(
             sourceEngine.toc(rule, stored.sourceId, hit, bookId, stored.allowCleartext)
         }, ruleParser,
     )
+    val refreshShelf = com.novelradar.app.domain.library.RefreshShelfUseCase(catalog)
 
     private val preferences = PreferenceDataStoreFactory.create {
         appContext.preferencesDataStoreFile("novel-radar-bootstrap.preferences_pb")

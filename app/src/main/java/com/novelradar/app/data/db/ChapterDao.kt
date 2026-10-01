@@ -63,4 +63,7 @@ interface ChapterDao {
 
     @Query("DELETE FROM chapters WHERE bookId = :bookId AND sourceId = :sourceId")
     suspend fun deleteForSource(bookId: String, sourceId: String)
+
+    @Query("UPDATE chapters SET localContentState = 'NOT_STORED', localFilePath = NULL, contentSha256 = NULL, contentBytes = NULL WHERE bookId = :bookId")
+    suspend fun clearStoredMetadata(bookId: String)
 }

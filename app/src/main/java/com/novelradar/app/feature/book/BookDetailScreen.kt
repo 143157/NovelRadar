@@ -58,7 +58,7 @@ fun BookDetailScreen(
         item {
             Surface(color = SignalOrange, modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(horizontal = 20.dp, vertical = 17.dp)) {
-                    TextButton(onClick = onBack) { Text("← 返回搜书", color = InkBlack) }
+                    TextButton(onClick = onBack) { Text("← 返回", color = InkBlack) }
                     Text(state.book?.bookName ?: "正在打开书籍…", color = CanvasWhite,
                         fontSize = 30.sp, fontWeight = FontWeight.Black)
                     state.book?.author?.takeIf(String::isNotBlank)?.let {

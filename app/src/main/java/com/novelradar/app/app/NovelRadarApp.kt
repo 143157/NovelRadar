@@ -41,6 +41,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.novelradar.app.SourceBootstrapState
 import com.novelradar.app.feature.book.BookDetailScreen
 import com.novelradar.app.feature.book.BookDetailViewModel
+import com.novelradar.app.feature.library.LibraryScreen
+import com.novelradar.app.feature.library.LibraryViewModel
 import com.novelradar.app.domain.model.ReaderPreferences
 import com.novelradar.app.feature.reader.ReaderScreen
 import com.novelradar.app.feature.reader.ReaderViewModel
@@ -66,12 +68,24 @@ private val destinations = listOf(
 
 @Composable
 fun NovelRadarApp(container: AppContainer, bootstrapState: StateFlow<SourceBootstrapState>) {
-    // Search is the first useful destination while bookshelf and reader pages are being built.
-    var selectedIndex by rememberSaveable { mutableIntStateOf(1) }
+    var selectedIndex by rememberSaveable { mutableIntStateOf(0) }
     var selectedBookId by rememberSaveable { mutableStateOf<String?>(null) }
     var readerSourceId by rememberSaveable { mutableStateOf<String?>(null) }
     var readerChapterId by rememberSaveable { mutableStateOf<String?>(null) }
     var readerSession by rememberSaveable { mutableIntStateOf(0) }
+    var readerFromShelf by rememberSaveable { mutableStateOf(false) }
+    val libraryFactory = remember(container) {
+        object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                require(modelClass == LibraryViewModel::class.java)
+                @Suppress("UNCHECKED_CAST")
+                return LibraryViewModel(container.books, container.refreshShelf::refresh,
+                    container.localChapterCleaner::delete) as T
+            }
+        }
+    }
+    val libraryViewModel: LibraryViewModel = viewModel(factory = libraryFactory)
+    val libraryState by libraryViewModel.uiState.collectAsStateWithLifecycle()
     val readerPreferenceFlow = remember(container) { container.readerSettings.preferences.catch { /* Reader shows the recoverable error. */ } }
     val readerPreferences by readerPreferenceFlow.collectAsStateWithLifecycle(initialValue = ReaderPreferences())
     val searchFactory = remember(container) {
@@ -113,6 +127,15 @@ fun NovelRadarApp(container: AppContainer, bootstrapState: StateFlow<SourceBoots
             selectedIndex = 1
         }
     }
+    LaunchedEffect(libraryViewModel) {
+        libraryViewModel.navigation.collect { target ->
+            selectedBookId = target.bookId
+            readerSourceId = target.sourceId
+            readerChapterId = null
+            readerFromShelf = true
+            readerSession++
+        }
+    }
     LaunchedEffect(sourceViewModel) {
         sourceViewModel.events.collect { event ->
             when (event) {
@@ -147,10 +170,18 @@ fun NovelRadarApp(container: AppContainer, bootstrapState: StateFlow<SourceBoots
         val modifier = Modifier.fillMaxSize().padding(contentPadding)
         when {
             selectedBookId != null && readerSourceId != null -> ReaderRoute(requireNotNull(selectedBookId), requireNotNull(readerSourceId),
-                readerChapterId, readerSession, container, { readerSourceId = null; readerChapterId = null },
+                readerChapterId, readerSession, container, {
+                    readerSourceId = null; readerChapterId = null
+                    if (readerFromShelf) selectedBookId = null
+                    readerFromShelf = false
+                },
                 { readerChapterId = null }, modifier)
             selectedBookId != null -> BookDetailRoute(requireNotNull(selectedBookId), container, { selectedBookId = null },
-                { sourceId, chapterId -> readerSourceId = sourceId; readerChapterId = chapterId; readerSession++ }, modifier)
+                { sourceId, chapterId -> readerFromShelf = false; readerSourceId = sourceId; readerChapterId = chapterId; readerSession++ }, modifier)
+            selectedIndex == 0 -> LibraryScreen(libraryState, libraryViewModel::open, libraryViewModel::refresh,
+                libraryViewModel::requestRemoval, libraryViewModel::confirmRemoval, libraryViewModel::cancelRemoval,
+                onSearch = { selectedIndex = 1 }, onDetails = { selectedBookId = it },
+                coverFetcher = container.coverFetcher, modifier = modifier)
             selectedIndex == 1 -> SearchScreen(
                 state = searchState,
                 onQueryChanged = searchViewModel::onQueryChanged,

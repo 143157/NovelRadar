@@ -20,7 +20,7 @@ import com.novelradar.app.data.db.entity.SourceRuleEntity
         ReadingProgressEntity::class,
         DownloadTaskEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class NovelDatabase : RoomDatabase() {
@@ -31,5 +31,23 @@ abstract class NovelDatabase : RoomDatabase() {
 
     companion object {
         const val NAME = "novel-radar.db"
+        val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE shelf_entries ADD COLUMN preferredSourceId TEXT")
+                db.execSQL("""
+                    UPDATE shelf_entries SET preferredSourceId = (
+                        SELECT p.sourceId FROM reading_progress p JOIN book_sources bs
+                        ON bs.bookId = p.bookId AND bs.sourceId = p.sourceId
+                        WHERE p.bookId = shelf_entries.bookId),
+                    lastReadAtEpochMillis = CASE WHEN EXISTS (
+                        SELECT 1 FROM reading_progress p JOIN book_sources bs
+                        ON bs.bookId = p.bookId AND bs.sourceId = p.sourceId
+                        WHERE p.bookId = shelf_entries.bookId)
+                    THEN MAX(COALESCE(lastReadAtEpochMillis, 0),
+                        (SELECT updatedAtEpochMillis FROM reading_progress WHERE bookId = shelf_entries.bookId))
+                    ELSE lastReadAtEpochMillis END
+                """.trimIndent())
+            }
+        }
     }
 }

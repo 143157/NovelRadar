@@ -2,6 +2,7 @@ package com.novelradar.app.data.repository
 
 import com.google.common.truth.Truth.assertThat
 import com.novelradar.app.data.db.BookDao
+import com.novelradar.app.data.db.ShelfProjection
 import com.novelradar.app.data.db.entity.BookEntity
 import com.novelradar.app.data.db.entity.BookSourceEntity
 import com.novelradar.app.data.db.entity.ReadingProgressEntity
@@ -65,6 +66,22 @@ class RoomBookRepositoryTest {
         assertThat(repository.progress(second.bookId).first()!!.chapterId).isEqualTo("chapter-3")
     }
 
+    @Test fun repeatedShelfAddPreservesAddedAndLastReadTimes() = runTest {
+        val book = repository.saveSearchHit(hit("source-a"))
+        repository.addToShelf(book.bookId, 100L)
+        repository.saveProgress(ReadingLocation(book.bookId, "source-a", "chapter-2", 1, 5, 200L))
+        repository.addToShelf(book.bookId, 300L)
+        val shelf = repository.observeShelf().first().single()
+        assertThat(shelf.addedAtEpochMillis).isEqualTo(100L)
+        assertThat(shelf.lastReadAtEpochMillis).isEqualTo(200L)
+    }
+
+    @Test fun progressRejectsSourceFromAnotherBook() = runTest {
+        val book = repository.saveSearchHit(hit("source-a"))
+        val failure = runCatching { repository.saveProgress(ReadingLocation(book.bookId, "other", "1", 0, 0, 1L)) }
+        assertThat(failure.exceptionOrNull()).isInstanceOf(IllegalArgumentException::class.java)
+    }
+
     private fun hit(sourceId: String) = SearchHit(
         sourceId = sourceId,
         bookName = "测试小说",
@@ -93,6 +110,13 @@ class RoomBookRepositoryTest {
             shelf.value = shelf.value.filterNot { it.bookId == entry.bookId } + entry
         }
         override fun observeShelf(): Flow<List<ShelfEntryEntity>> = shelf
+        override suspend fun getShelfEntry(bookId: String) = shelf.value.firstOrNull { it.bookId == bookId }
+        override fun observeShelfDetails(): Flow<List<ShelfProjection>> = kotlinx.coroutines.flow.combine(shelf, progresses) { rows, locations ->
+            rows.sortedByDescending { it.lastReadAtEpochMillis ?: it.addedAtEpochMillis }.map { row ->
+                val progress = locations.firstOrNull { it.bookId == row.bookId }
+                ShelfProjection(books.getValue(row.bookId), row, progress, row.preferredSourceId ?: progress?.sourceId, 0, 0, null)
+            }
+        }
         override suspend fun removeFromShelf(bookId: String) {
             shelf.value = shelf.value.filterNot { it.bookId == bookId }
         }

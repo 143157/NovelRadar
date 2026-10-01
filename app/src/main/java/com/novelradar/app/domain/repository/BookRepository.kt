@@ -10,6 +10,11 @@ data class ShelfBook(
     val addedAtEpochMillis: Long,
     val lastReadAtEpochMillis: Long?,
     val hasUpdate: Boolean,
+    val preferredSourceId: String? = null,
+    val location: ReadingLocation? = null,
+    val chapterCount: Int = 0,
+    val unreadCount: Int = 0,
+    val lastChapterTitle: String? = null,
 )
 
 data class ReadingLocation(
@@ -27,6 +32,11 @@ interface BookRepository {
     fun observeSources(bookId: String): Flow<List<BookSource>>
     fun observeShelf(): Flow<List<ShelfBook>>
     suspend fun addToShelf(bookId: String, atEpochMillis: Long)
+    suspend fun addToShelf(bookId: String, atEpochMillis: Long, sourceId: String) {
+        addToShelf(bookId, atEpochMillis)
+    }
+    suspend fun preferredSource(bookId: String): String? = null
+    suspend fun selectPreferredSource(bookId: String, sourceId: String) = Unit
     suspend fun removeFromShelf(bookId: String)
     fun progress(bookId: String): Flow<ReadingLocation?>
     suspend fun saveProgress(location: ReadingLocation)

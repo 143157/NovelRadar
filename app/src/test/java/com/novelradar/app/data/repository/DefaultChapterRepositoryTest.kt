@@ -301,5 +301,11 @@ class DefaultChapterRepositoryTest {
         override suspend fun deleteForSource(bookId: String, sourceId: String) {
             rows.keys.removeAll { it.first == bookId && it.second == sourceId }
         }
+        override suspend fun clearStoredMetadata(bookId: String) {
+            rows.entries.filter { it.key.first == bookId }.forEach { (key, row) ->
+                rows[key] = row.copy(localContentState = "NOT_STORED", localFilePath = null,
+                    contentSha256 = null, contentBytes = null)
+            }
+        }
     }
 }

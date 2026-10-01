@@ -105,6 +105,46 @@ class NovelDatabaseTest {
             .containsExactly(downloadTask(completedCount = 5))
     }
 
+    @Test fun shelfProjectionCountsOnlyPreferredSourceAndReactsToCatalogAndProgress() = runBlocking {
+        database.bookDao().upsertBookAndSource(book(), bookSource())
+        database.bookDao().upsertSource(bookSource().copy(sourceId = "other"))
+        database.bookDao().addShelfPreservingHistory("book-1", 10, "source-1")
+        database.chapterDao().upsertAll(listOf(chapter("c-0", 0), chapter("c-1", 1), chapter("c-2", 2),
+            chapter("foreign", 99).copy(sourceId = "other")))
+        var row = database.bookDao().observeShelfDetails().first().single()
+        assertThat(row.chapterCount).isEqualTo(3)
+        assertThat(row.unreadCount).isEqualTo(3)
+        database.bookDao().saveReadingLocation(progress(1, 17))
+        row = database.bookDao().observeShelfDetails().first().single()
+        assertThat(row.unreadCount).isEqualTo(1)
+        assertThat(row.progress?.offset).isEqualTo(17)
+        assertThat(row.shelf.lastReadAtEpochMillis).isEqualTo(100)
+        database.chapterDao().upsert(chapter("c-3", 3))
+        row = database.bookDao().observeShelfDetails().first().single()
+        assertThat(row.chapterCount).isEqualTo(4)
+        assertThat(row.unreadCount).isEqualTo(2)
+    }
+
+    @Test fun invalidLegacyPreferredSourceFallsBackToKnownProgressSource() = runBlocking {
+        database.bookDao().upsertBookAndSource(book(), bookSource())
+        database.bookDao().upsertShelfEntry(ShelfEntryEntity("book-1", 1, preferredSourceId = "foreign"))
+        database.bookDao().upsertProgress(progress(1, 0))
+        assertThat(database.bookDao().observeShelfDetails().first().single().selectedSourceId).isEqualTo("source-1")
+    }
+
+    @Test fun clearingLocalMetadataKeepsCatalogAndProgress() = runBlocking {
+        database.bookDao().upsertBookAndSource(book(), bookSource())
+        database.chapterDao().upsert(chapter("c-1", 1).copy(localContentState = "DOWNLOADED",
+            localFilePath = "books/book-1/chapter.txt", contentSha256 = "abc", contentBytes = 50))
+        database.bookDao().upsertProgress(progress(1, 12))
+        database.chapterDao().clearStoredMetadata("book-1")
+        val stored = database.chapterDao().getChapters("book-1", "source-1").single()
+        assertThat(stored.localContentState).isEqualTo("NOT_STORED")
+        assertThat(stored.localFilePath).isNull()
+        assertThat(stored.contentBytes).isNull()
+        assertThat(database.bookDao().progress("book-1").first()?.offset).isEqualTo(12)
+    }
+
     private fun sourceRule(rawJson: String) = SourceRuleEntity(
         sourceId = "source-1", rawJson = rawJson, enabled = true, builtIn = false,
         allowCleartext = false,

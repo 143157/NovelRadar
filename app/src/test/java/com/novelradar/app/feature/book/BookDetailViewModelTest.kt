@@ -69,6 +69,19 @@ class BookDetailViewModelTest {
         collector.cancel()
     }
 
+    @Test fun preferredSourceRestoresAndSelectedSourceIsStoredWhenAdded() = runTest {
+        val books = FakeBooks().apply { preferred = "b" }
+        val vm = BookDetailViewModel("book-1", FakeCatalog(), books)
+        backgroundScope.launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.selectedSourceId).isEqualTo("b")
+        vm.selectSource("a")
+        vm.addToShelf()
+        advanceUntilIdle()
+        assertThat(books.addedSource).isEqualTo("a")
+        assertThat(books.preferred).isEqualTo("a")
+    }
+
     private class FakeCatalog : CatalogRepository {
         var failRefresh = false
         override suspend fun book(bookId: String) = Book("book-1", "星河旅人|叶子", "星河旅人", "叶子")
@@ -90,6 +103,13 @@ class BookDetailViewModelTest {
 
     private class FakeBooks : BookRepository {
         var added: String? = null
+        var addedSource: String? = null
+        var preferred: String? = null
+        override suspend fun preferredSource(bookId: String) = preferred
+        override suspend fun selectPreferredSource(bookId: String, sourceId: String) { preferred = sourceId }
+        override suspend fun addToShelf(bookId: String, atEpochMillis: Long, sourceId: String) {
+            added = bookId; addedSource = sourceId; preferred = sourceId
+        }
         override suspend fun saveSearchHit(hit: SearchHit) = Book("book-1", "x", "星河旅人", "叶子")
         override suspend fun getBook(bookId: String) = Book("book-1", "x", "星河旅人", "叶子")
         override fun observeSources(bookId: String): Flow<List<BookSource>> = MutableStateFlow(emptyList())

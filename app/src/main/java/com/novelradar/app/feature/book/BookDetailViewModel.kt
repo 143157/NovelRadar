@@ -34,7 +34,9 @@ class BookDetailViewModel(
                 val sourceNames = catalog.sourceNames()
                 mutableState.update { it.copy(book = book, sources = sources,
                     sourceNames = sourceNames, loading = false) }
-                sources.firstOrNull()?.let { selectSource(it.sourceId) }
+                val preferred = books.preferredSource(bookId)
+                (sources.firstOrNull { it.sourceId == preferred } ?: sources.firstOrNull())
+                    ?.let { selectSource(it.sourceId) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -81,7 +83,8 @@ class BookDetailViewModel(
     fun addToShelf() {
         viewModelScope.launch {
             try {
-                books.addToShelf(bookId, clock())
+                val sourceId = mutableState.value.selectedSourceId ?: return@launch
+                books.addToShelf(bookId, clock(), sourceId)
                 mutableState.update { it.copy(addedToShelf = true, notice = "已加入书架") }
             } catch (cancelled: CancellationException) {
                 throw cancelled

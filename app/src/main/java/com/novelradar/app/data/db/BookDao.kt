@@ -40,6 +40,58 @@ interface BookDao {
     @Upsert
     suspend fun upsertShelfEntry(entry: ShelfEntryEntity)
 
+    @Query("SELECT * FROM shelf_entries WHERE bookId = :bookId")
+    suspend fun getShelfEntry(bookId: String): ShelfEntryEntity?
+
+    @Transaction
+    suspend fun addShelfPreservingHistory(bookId: String, at: Long, sourceId: String?) {
+        requireNotNull(getBook(bookId)) { "Unknown book" }
+        if (sourceId != null) requireNotNull(getSource(bookId, sourceId)) { "Source does not belong to book" }
+        val old = getShelfEntry(bookId)
+        upsertShelfEntry(old?.copy(preferredSourceId = sourceId ?: old.preferredSourceId)
+            ?: ShelfEntryEntity(bookId, at, preferredSourceId = sourceId))
+    }
+
+    @Transaction
+    suspend fun saveReadingLocation(progress: ReadingProgressEntity) {
+        requireNotNull(getSource(progress.bookId, progress.sourceId)) { "Source does not belong to book" }
+        upsertProgress(progress)
+        getShelfEntry(progress.bookId)?.let {
+            upsertShelfEntry(it.copy(lastReadAtEpochMillis = progress.updatedAtEpochMillis,
+                preferredSourceId = progress.sourceId))
+        }
+    }
+
+    @Transaction
+    suspend fun selectShelfSource(bookId: String, sourceId: String) {
+        requireNotNull(getSource(bookId, sourceId)) { "Source does not belong to book" }
+        getShelfEntry(bookId)?.let { upsertShelfEntry(it.copy(preferredSourceId = sourceId)) }
+    }
+
+    @Query("""
+        SELECT b.bookId AS book_bookId, b.normalizedBookKey AS book_normalizedBookKey,
+        b.bookName AS book_bookName, b.author AS book_author, b.coverUrl AS book_coverUrl,
+        b.introduction AS book_introduction,
+        s.bookId AS shelf_bookId, s.addedAtEpochMillis AS shelf_addedAtEpochMillis,
+        s.lastReadAtEpochMillis AS shelf_lastReadAtEpochMillis, s.hasUpdate AS shelf_hasUpdate,
+        s.preferredSourceId AS shelf_preferredSourceId,
+        p.bookId AS progress_bookId, p.sourceId AS progress_sourceId, p.chapterId AS progress_chapterId,
+        p.chapterIndex AS progress_chapterIndex, p.offset AS progress_offset,
+        p.updatedAtEpochMillis AS progress_updatedAtEpochMillis,
+        bs.sourceId AS selectedSourceId, COUNT(c.chapterId) AS chapterCount,
+        SUM(CASE WHEN c.chapterId IS NOT NULL AND (p.sourceId IS NULL OR p.sourceId != bs.sourceId OR c.chapterIndex > p.chapterIndex) THEN 1 ELSE 0 END) AS unreadCount,
+        (SELECT title FROM chapters WHERE bookId = b.bookId AND sourceId = bs.sourceId ORDER BY chapterIndex DESC LIMIT 1) AS lastChapterTitle
+        FROM shelf_entries s JOIN books b ON b.bookId = s.bookId
+        LEFT JOIN reading_progress p ON p.bookId = b.bookId
+        LEFT JOIN book_sources bs ON bs.bookId = b.bookId AND bs.sourceId = COALESCE(
+            (SELECT sourceId FROM book_sources WHERE bookId = b.bookId AND sourceId = s.preferredSourceId),
+            (SELECT sourceId FROM book_sources WHERE bookId = b.bookId AND sourceId = p.sourceId),
+            (SELECT sourceId FROM book_sources WHERE bookId = b.bookId ORDER BY sourceId LIMIT 1))
+        LEFT JOIN chapters c ON c.bookId = b.bookId AND c.sourceId = bs.sourceId
+        GROUP BY b.bookId ORDER BY s.lastReadAtEpochMillis DESC, s.addedAtEpochMillis DESC, b.bookId
+    """)
+    fun observeShelfDetails(): Flow<List<ShelfProjection>>
+
     @Query(
         "SELECT shelf_entries.* FROM shelf_entries " +
             "INNER JOIN books ON books.bookId = shelf_entries.bookId " +

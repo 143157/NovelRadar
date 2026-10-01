@@ -15,6 +15,7 @@ import com.novelradar.app.domain.repository.ShelfBook
 import java.security.MessageDigest
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
 
 class RoomBookRepository(private val dao: BookDao) : BookRepository {
     override suspend fun saveSearchHit(hit: SearchHit): Book {
@@ -41,18 +42,29 @@ class RoomBookRepository(private val dao: BookDao) : BookRepository {
         rows.map { it.toDomain() }
     }
 
-    override fun observeShelf(): Flow<List<ShelfBook>> = dao.observeShelf().map { rows ->
-        rows.mapNotNull { row ->
-            dao.getBook(row.bookId)?.let { book ->
-                ShelfBook(book.toDomain(), row.addedAtEpochMillis, row.lastReadAtEpochMillis, row.hasUpdate)
-            }
+    override fun observeShelf(): Flow<List<ShelfBook>> = dao.observeShelfDetails().map { rows ->
+        rows.map { row ->
+            ShelfBook(row.book.toDomain(), row.shelf.addedAtEpochMillis, row.shelf.lastReadAtEpochMillis,
+                row.shelf.hasUpdate, row.selectedSourceId, row.progress?.toDomain(),
+                row.chapterCount, row.unreadCount, row.lastChapterTitle)
         }
     }
 
     override suspend fun addToShelf(bookId: String, atEpochMillis: Long) {
         requireNotNull(dao.getBook(bookId)) { "Unknown book" }
-        dao.upsertShelfEntry(ShelfEntryEntity(bookId, atEpochMillis))
+        dao.addShelfPreservingHistory(bookId, atEpochMillis, null)
     }
+
+    override suspend fun addToShelf(bookId: String, atEpochMillis: Long, sourceId: String) =
+        dao.addShelfPreservingHistory(bookId, atEpochMillis, sourceId)
+
+    override suspend fun preferredSource(bookId: String): String? {
+        val selected = dao.getShelfEntry(bookId)?.preferredSourceId
+        if (selected != null && dao.getSource(bookId, selected) != null) return selected
+        return dao.progress(bookId).first()?.sourceId?.takeIf { dao.getSource(bookId, it) != null }
+    }
+
+    override suspend fun selectPreferredSource(bookId: String, sourceId: String) = dao.selectShelfSource(bookId, sourceId)
 
     override suspend fun removeFromShelf(bookId: String) = dao.removeFromShelf(bookId)
 
@@ -61,7 +73,7 @@ class RoomBookRepository(private val dao: BookDao) : BookRepository {
     override suspend fun saveProgress(location: ReadingLocation) {
         require(location.chapterIndex >= 0 && location.offset >= 0) { "Invalid reading position" }
         requireNotNull(dao.getBook(location.bookId)) { "Unknown book" }
-        dao.upsertProgress(ReadingProgressEntity(
+        dao.saveReadingLocation(ReadingProgressEntity(
             location.bookId, location.sourceId, location.chapterId,
             location.chapterIndex, location.offset, location.updatedAtEpochMillis,
         ))
