@@ -9,6 +9,28 @@ import org.junit.Test
 class NovelDatabaseMigrationTest {
     @get:Rule val helper = MigrationTestHelper(InstrumentationRegistry.getInstrumentation(), NovelDatabase::class.java)
 
+    @Test fun versionTwoPreservesTaskShelfAndProgressAndAddsConservativeDownloadDefaults() {
+        val name = "download-migration-test"
+        helper.createDatabase(name, 2).apply {
+            execSQL("INSERT INTO books (bookId, normalizedBookKey, bookName, author) VALUES ('book', 'key', 'Book', 'Author')")
+            execSQL("INSERT INTO book_sources (bookId, sourceId, detailUrl, status) VALUES ('book', 'source', 'https://example.test/book', 'UNKNOWN')")
+            execSQL("INSERT INTO shelf_entries (bookId, addedAtEpochMillis, lastReadAtEpochMillis, hasUpdate, preferredSourceId) VALUES ('book', 1, 50, 0, 'source')")
+            execSQL("INSERT INTO reading_progress (bookId, sourceId, chapterId, chapterIndex, offset, updatedAtEpochMillis) VALUES ('book', 'source', 'c1', 1, 77, 50)")
+            execSQL("INSERT INTO download_tasks (taskId, bookId, sourceId, state, totalCount, completedCount, failedCount, createdAtEpochMillis, updatedAtEpochMillis, workId) VALUES ('task', 'book', 'source', 'RUNNING', 100, 20, 2, 1, 50, 'old-work')")
+            close()
+        }
+        helper.runMigrationsAndValidate(name, 3, true, NovelDatabase.MIGRATION_2_3).use { db ->
+            db.query("SELECT state, completedCount, failedCount, workId, generation, allowMetered, networkAttempts, failedChapterIds FROM download_tasks").use {
+                it.moveToFirst(); assertThat(it.getString(0)).isEqualTo("PAUSED")
+                assertThat(it.getInt(1)).isEqualTo(20); assertThat(it.getInt(2)).isEqualTo(2)
+                assertThat(it.getString(3)).isEqualTo("old-work"); assertThat(it.getLong(4)).isEqualTo(0)
+                assertThat(it.getInt(5)).isEqualTo(0); assertThat(it.getInt(6)).isEqualTo(0); assertThat(it.getString(7)).isEmpty()
+            }
+            db.query("SELECT offset FROM reading_progress").use { it.moveToFirst(); assertThat(it.getInt(0)).isEqualTo(77) }
+            db.query("SELECT preferredSourceId FROM shelf_entries").use { it.moveToFirst(); assertThat(it.getString(0)).isEqualTo("source") }
+        }
+    }
+
     @Test fun versionOneRestoresOwnedSourceAndReadTimeWithoutLosingNewerTime() {
         val name = "shelf-migration-test"
         helper.createDatabase(name, 1).apply {

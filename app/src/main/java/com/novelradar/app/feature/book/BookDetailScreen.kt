@@ -162,4 +162,6 @@ private fun SourceFailure.label(): String = when (this) {
     is SourceFailure.Decode -> "文字解码失败"
     is SourceFailure.UnsafeRule -> "书源规则不可用"
     is SourceFailure.Unexpected -> "连接失败"
+    is SourceFailure.Network -> "网络连接失败"
+    is SourceFailure.Storage -> "本地存储不可用"
 }

@@ -115,6 +115,8 @@ private fun SourceFailure?.toColumns(): Pair<String?, String?> = when (this) {
     SourceFailure.VerificationRequired -> "VerificationRequired" to null
     is SourceFailure.UnsafeRule -> "UnsafeRule" to reason
     is SourceFailure.Unexpected -> "Unexpected" to message
+    is SourceFailure.Network -> "Network" to message
+    is SourceFailure.Storage -> "Storage" to message
 }
 
 private fun failureFromColumns(kind: String?, detail: String?): SourceFailure? = when (kind) {
@@ -125,5 +127,7 @@ private fun failureFromColumns(kind: String?, detail: String?): SourceFailure? =
     "VerificationRequired" -> SourceFailure.VerificationRequired
     "UnsafeRule" -> SourceFailure.UnsafeRule(detail.orEmpty())
     "Unexpected" -> SourceFailure.Unexpected(detail.orEmpty())
+    "Network" -> SourceFailure.Network(detail.orEmpty())
+    "Storage" -> SourceFailure.Storage(detail.orEmpty())
     else -> null
 }

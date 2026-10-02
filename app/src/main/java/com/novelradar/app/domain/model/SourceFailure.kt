@@ -8,6 +8,8 @@ sealed interface SourceFailure {
     data object VerificationRequired : SourceFailure
     data class UnsafeRule(val reason: String) : SourceFailure
     data class Unexpected(val message: String) : SourceFailure
+    data class Network(val message: String) : SourceFailure
+    data class Storage(val message: String) : SourceFailure
 }
 
 sealed interface SourceResult<out T> {

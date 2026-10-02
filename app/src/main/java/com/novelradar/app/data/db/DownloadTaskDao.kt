@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface DownloadTaskDao {
+    @Query("SELECT * FROM download_tasks ORDER BY updatedAtEpochMillis DESC, taskId")
+    suspend fun getAll(): List<DownloadTaskEntity>
     @Upsert
     suspend fun upsert(task: DownloadTaskEntity)
 

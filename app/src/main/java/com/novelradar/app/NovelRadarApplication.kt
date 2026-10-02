@@ -24,6 +24,12 @@ class NovelRadarApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        com.novelradar.app.data.download.DownloadNotificationFactory(this).createChannel()
+        applicationScope.launch {
+            try { container.downloads.reconcile() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { /* Durable tasks remain available for manual recovery on next startup. */ }
+        }
         applicationScope.launch {
             try {
                 container.builtInInstaller.run()

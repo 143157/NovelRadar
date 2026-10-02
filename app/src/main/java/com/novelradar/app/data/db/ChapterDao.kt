@@ -30,8 +30,9 @@ interface ChapterDao {
         val oldById = getChapters(bookId, sourceId).associateBy { it.chapterId }
         val preserved = chapters.map { chapter ->
             oldById[chapter.chapterId]?.let { old ->
-                chapter.copy(localContentState = old.localContentState, localFilePath = old.localFilePath,
+                old.takeIf { it.url == chapter.url }?.let { chapter.copy(localContentState = old.localContentState, localFilePath = old.localFilePath,
                     contentSha256 = old.contentSha256, contentBytes = old.contentBytes)
+                } ?: chapter
             } ?: chapter
         }
         deleteForSource(bookId, sourceId)
@@ -45,7 +46,7 @@ interface ChapterDao {
     suspend fun getChapter(bookId: String, sourceId: String, chapterId: String): ChapterEntity?
 
     @Query(
-        "UPDATE chapters SET localContentState = :state, localFilePath = :path, " +
+        "UPDATE chapters SET localContentState = CASE WHEN localContentState = 'DOWNLOADED' THEN 'DOWNLOADED' ELSE :state END, localFilePath = :path, " +
             "contentSha256 = :sha256, contentBytes = :byteCount " +
             "WHERE bookId = :bookId AND sourceId = :sourceId AND chapterId = :chapterId " +
             "AND url = :expectedUrl",

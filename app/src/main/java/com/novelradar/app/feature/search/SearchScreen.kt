@@ -191,4 +191,6 @@ private fun SourceFailure.label(): String = when (this) {
     SourceFailure.VerificationRequired -> "网站需要验证"
     is SourceFailure.UnsafeRule -> "书源规则不可用"
     is SourceFailure.Unexpected -> "连接或解析失败"
+    is SourceFailure.Network -> "网络连接失败"
+    is SourceFailure.Storage -> "本地存储不可用"
 }

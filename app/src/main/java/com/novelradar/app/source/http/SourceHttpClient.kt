@@ -71,7 +71,11 @@ class SourceHttpClient(
                 throw error
             } catch (error: IOException) {
                 currentCoroutineContext().ensureActive()
-                return SourceResult.Failure(if (error is SocketTimeoutException || error is InterruptedIOException) SourceFailure.Timeout else SourceFailure.Unexpected(error.message ?: "network error"))
+                return SourceResult.Failure(when (error) {
+                    is javax.net.ssl.SSLException -> SourceFailure.UnsafeRule("TLS verification failed")
+                    is SocketTimeoutException, is InterruptedIOException -> SourceFailure.Timeout
+                    else -> SourceFailure.Network(error.message ?: "network error")
+                })
             } catch (error: Exception) {
                 currentCoroutineContext().ensureActive()
                 return SourceResult.Failure(SourceFailure.Unexpected(error.message ?: "network error"))

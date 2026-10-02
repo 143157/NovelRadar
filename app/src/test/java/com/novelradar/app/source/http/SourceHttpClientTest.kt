@@ -23,6 +23,16 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.Test
 
 class SourceHttpClientTest {
+    @Test fun tlsVerificationFailureIsNotRetryableTransportFailure() = runBlocking {
+        val client = OkHttpClient.Builder().addInterceptor { throw javax.net.ssl.SSLHandshakeException("certificate invalid") }.build()
+        val result = SourceHttpClient(client).execute("source", request("https://example.test/chapter")) as SourceResult.Failure
+        assertThat(result.error).isInstanceOf(SourceFailure.UnsafeRule::class.java)
+    }
+    @Test fun transportIOExceptionIsRetryableNetworkInsteadOfMixedUnexpected() = runBlocking {
+        val client = OkHttpClient.Builder().addInterceptor { throw java.io.IOException("connection reset") }.build()
+        val result = SourceHttpClient(client).execute("source", request("https://example.test/chapter")) as SourceResult.Failure
+        assertThat(result.error).isInstanceOf(SourceFailure.Network::class.java)
+    }
     @Test fun followsThreeRedirectsAndExposesFinalUrlBytesAndContentType() = withServer { server ->
         repeat(3) { index -> server.enqueue(MockResponse().setResponseCode(302).addHeader("Location", "/step${index + 1}")) }
         server.enqueue(MockResponse().addHeader("Content-Type", "text/html; charset=utf-8").setBody("书"))

@@ -48,6 +48,7 @@ class AtomicChapterFileStore(
             withContext(Dispatchers.IO) {
                 val target = chapterPath(bookId, sourceId, chapterId)
                 if (!Files.isRegularFile(target)) return@withContext null
+                if (Files.size(target) > MAX_CHAPTER_BYTES) return@withContext null
                 val bytes = Files.readAllBytes(target)
                 if (expectedSha256 != null && !sha256(bytes).equals(expectedSha256, ignoreCase = true)) {
                     return@withContext null
@@ -92,6 +93,7 @@ class AtomicChapterFileStore(
 
     private companion object {
         val ID_PATTERN = Regex("[A-Za-z0-9._-]+")
+        const val MAX_CHAPTER_BYTES = 8L * 1024 * 1024
     }
 }
 

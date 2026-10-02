@@ -28,6 +28,91 @@ import org.junit.rules.TemporaryFolder
 class DefaultChapterRepositoryTest {
     @get:Rule val temporary = TemporaryFolder()
 
+    @Test fun deletionWaitsNonCancellableOldWriteAndStaleWorkerCannotResurrectFiles() = runBlocking {
+        val leases = com.novelradar.app.data.download.BookDownloadLeases()
+        val realFiles = AtomicChapterFileStore(temporary.root.toPath())
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        val files = object : com.novelradar.app.data.files.ChapterFileStore by realFiles {
+            override suspend fun write(bookId: String, sourceId: String, chapterId: String, content: String) =
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    entered.complete(Unit); release.await(); realFiles.write(bookId, sourceId, chapterId, content)
+                }
+        }
+        val dao = FakeChapterDao(chapter("one", 0))
+        val repository = DefaultChapterRepository(dao, files, { SourceResult.Success("正文") }, contentLeases = leases)
+        val store = com.novelradar.app.data.download.MemoryDownloadStore().apply {
+            rows["task"] = com.novelradar.app.data.download.task()
+        }
+        val runner = com.novelradar.app.data.download.BookDownloadRunner(store, repository, leases,
+            com.novelradar.app.data.download.SourceDownloadLimiter(wait = {}), { com.novelradar.app.data.download.CrawlPolicy.from(null) })
+        val running = async { runner.run("task", "work", 1) }
+        val scheduler = object : com.novelradar.app.data.download.DownloadScheduler {
+            override fun newWorkId() = "new"
+            override suspend fun enqueue(task: com.novelradar.app.data.db.entity.DownloadTaskEntity, name: String) = Unit
+            override suspend fun cancel(workId: String) { running.cancel() }
+            override suspend fun awaitTerminal(workId: String) = Unit // WM terminal is deliberately ahead of the physical write.
+            override suspend fun status(workId: String) = com.novelradar.app.data.download.ScheduledStatus.TERMINAL
+        }
+        val coordinator = com.novelradar.app.data.download.DownloadCoordinator(store, scheduler, leases)
+        val cleaner = com.novelradar.app.data.files.LocalChapterCleaner(files, dao::clearStoredMetadata)
+        entered.await()
+        val deletion = async { coordinator.deleteLocal("book") { cleaner.delete("book") } }
+        kotlinx.coroutines.yield()
+        assertThat(deletion.isCompleted).isFalse()
+        release.complete(Unit)
+        running.join(); deletion.await()
+        assertThat(realFiles.read("book", "source", "one")).isNull()
+        assertThat(dao.getChapter("book", "source", "one")!!.localContentState).isEqualTo("NOT_STORED")
+        assertThat(store.get("task")!!.completedCount).isEqualTo(0)
+        assertThat(runner.run("task", "work", 1)).isEqualTo(com.novelradar.app.data.download.DownloadRunResult.OBSOLETE)
+        assertThat(realFiles.read("book", "source", "one")).isNull()
+    }
+
+    @Test fun readerAndDownloadShareLockAndFetchOnceWithDownloadedMetadata() = runBlocking {
+        val dao = FakeChapterDao(chapter("one", 0))
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        var fetches = 0
+        val repository = DefaultChapterRepository(dao, AtomicChapterFileStore(temporary.root.toPath()), {
+            fetches++; entered.complete(Unit); release.await(); SourceResult.Success("正文")
+        })
+        val reading = async { repository.loadChapter("book", "source", "one") }
+        entered.await()
+        val download = async { repository.download(chapter("one", 0)) }
+        release.complete(Unit); reading.await(); download.await()
+        assertThat(fetches).isEqualTo(1)
+        assertThat(dao.getChapter("book", "source", "one")!!.localContentState).isEqualTo("DOWNLOADED")
+    }
+
+    @Test fun verifiedCachedFilePromotesToDownloadedWithoutFetching() = runBlocking {
+        val files = AtomicChapterFileStore(temporary.root.toPath())
+        val saved = files.write("book", "source", "one", "正文")
+        val row = chapter("one", 0).copy(localContentState = "CACHED", localFilePath = saved.relativePath,
+            contentSha256 = saved.sha256, contentBytes = saved.byteCount)
+        val dao = FakeChapterDao(row)
+        val repository = DefaultChapterRepository(dao, files, { error("Network should not be used") })
+        assertThat(repository.verifiedBytes(row)).isEqualTo(saved.byteCount)
+        assertThat(dao.getChapter("book", "source", "one")!!.localContentState).isEqualTo("DOWNLOADED")
+    }
+
+    @Test fun realDownloadWritesVerifiedDownloadedMetadataAndReaderCannotDowngrade() = runBlocking {
+        val files = AtomicChapterFileStore(temporary.root.toPath())
+        val dao = FakeChapterDao(chapter("one", 0))
+        val repository = DefaultChapterRepository(dao, files, { SourceResult.Success("正文") })
+        assertThat(repository.download(chapter("one", 0))).isEqualTo(SourceResult.Success("正文".toByteArray().size.toLong()))
+        assertThat(dao.getChapter("book", "source", "one")!!.localContentState).isEqualTo("DOWNLOADED")
+        repository.loadChapter("book", "source", "one")
+        assertThat(dao.getChapter("book", "source", "one")!!.localContentState).isEqualTo("DOWNLOADED")
+    }
+
+    @Test fun downloadStorageFailureDoesNotCountAsNetworkFailure() = runBlocking {
+        val files = AtomicChapterFileStore(temporary.root.toPath(), replace = { _, _ -> throw java.io.IOException("No space") })
+        val dao = FakeChapterDao(chapter("one", 0))
+        val repository = DefaultChapterRepository(dao, files, { SourceResult.Success("正文") })
+        val failed = repository.download(chapter("one", 0)) as SourceResult.Failure
+        assertThat(failed.error).isInstanceOf(SourceFailure.Storage::class.java)
+        assertThat(dao.getChapter("book", "source", "one")!!.localContentState).isEqualTo("NOT_STORED")
+    }
+
     @Test fun validDownloadedFileLoadsWithoutNetwork() = runBlocking {
         val files = AtomicChapterFileStore(temporary.root.toPath())
         val saved = files.write("book", "source", "one", "下载正文")
@@ -77,12 +162,12 @@ class DefaultChapterRepositoryTest {
 
         assertThat(first.value.origin).isEqualTo(ChapterOrigin.Network)
         assertThat(first.value.content).isEqualTo("新正文")
-        assertThat(row.localContentState).isEqualTo("CACHED")
+        assertThat(row.localContentState).isEqualTo("DOWNLOADED")
         assertThat(row.localFilePath).isEqualTo("books/book/source/one.txt")
         assertThat(row.contentSha256).hasLength(64)
         assertThat(row.contentBytes).isEqualTo("新正文".toByteArray(Charsets.UTF_8).size.toLong())
         assertThat(files.read("book", "source", "one", row.contentSha256)).isEqualTo("新正文")
-        assertThat(second.value.origin).isEqualTo(ChapterOrigin.Cached)
+        assertThat(second.value.origin).isEqualTo(ChapterOrigin.Downloaded)
         assertThat(fetches).isEqualTo(1)
     }
 

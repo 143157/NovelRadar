@@ -20,7 +20,7 @@ import com.novelradar.app.data.db.entity.SourceRuleEntity
         ReadingProgressEntity::class,
         DownloadTaskEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class NovelDatabase : RoomDatabase() {
@@ -31,6 +31,21 @@ abstract class NovelDatabase : RoomDatabase() {
 
     companion object {
         const val NAME = "novel-radar.db"
+        val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE download_tasks ADD COLUMN generation INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE download_tasks ADD COLUMN allowMetered INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE download_tasks ADD COLUMN retryFailedOnly INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE download_tasks ADD COLUMN networkRetryOnly INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE download_tasks ADD COLUMN networkAttempts INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE download_tasks ADD COLUMN failedChapterIds TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE download_tasks ADD COLUMN networkFailedChapterIds TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE download_tasks ADD COLUMN bytesDownloaded INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE download_tasks ADD COLUMN currentChapterId TEXT")
+                db.execSQL("ALTER TABLE download_tasks ADD COLUMN bytesPerSecond INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE download_tasks SET state = 'PAUSED', lastError = '下载升级后请继续下载' WHERE state IN ('QUEUED', 'RUNNING')")
+            }
+        }
         val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE shelf_entries ADD COLUMN preferredSourceId TEXT")

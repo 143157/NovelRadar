@@ -17,6 +17,7 @@ import com.novelradar.app.data.repository.DefaultChapterRepository
 import com.novelradar.app.data.repository.ChapterPageFetcher
 import com.novelradar.app.data.repository.RuleBasedChapterContentFetcher
 import com.novelradar.app.data.repository.RoomChapterCatalogStore
+import com.novelradar.app.data.repository.WorkManagerDownloadRepository
 import com.novelradar.app.data.repository.RoomSourceRuleRepository
 import com.novelradar.app.domain.repository.BookRepository
 import com.novelradar.app.domain.repository.CatalogFetcher
@@ -56,7 +57,7 @@ class AppContainer(
         appContext,
         NovelDatabase::class.java,
         NovelDatabase.NAME,
-    ).addMigrations(NovelDatabase.MIGRATION_1_2).build()
+    ).addMigrations(NovelDatabase.MIGRATION_1_2, NovelDatabase.MIGRATION_2_3).build()
 
     val httpClient = OkHttpClient()
     val ruleParser = RuleJsonParser()
@@ -92,10 +93,11 @@ class AppContainer(
     val aggregateSearch = AggregateSearchUseCase(sourceRules, sourceSearch, ruleParser)
     val testSource = TestSourceUseCase(sourceSearch, ruleParser)
     private val chapterFiles = AtomicChapterFileStore(appContext.filesDir.toPath())
-    val localChapterCleaner = com.novelradar.app.data.files.LocalChapterCleaner(
+    private val downloadLeases = com.novelradar.app.data.download.BookDownloadLeases()
+    private val localChapterCleaner = com.novelradar.app.data.files.LocalChapterCleaner(
         chapterFiles, database.chapterDao()::clearStoredMetadata)
     val coverFetcher = com.novelradar.app.data.repository.SafeCoverFetcher(SourceHttpClient(httpClient))
-    val chapters: ChapterRepository = DefaultChapterRepository(
+    private val chapterRepository = DefaultChapterRepository(
         chapters = database.chapterDao(),
         files = chapterFiles,
         fetcher = RuleBasedChapterContentFetcher(sourceRules,
@@ -106,7 +108,21 @@ class AppContainer(
             appContext.getSystemService(ConnectivityManager::class.java)?.isActiveNetworkMetered ?: true
         },
         allowMeteredPrefetch = { readerSettings.preferences.first().allowMeteredPrefetch },
+        contentLeases = downloadLeases,
     )
+    val chapters: ChapterRepository = chapterRepository
+    private suspend fun crawlPolicy(sourceId: String): com.novelradar.app.data.download.CrawlPolicy {
+        val raw = database.sourceRuleDao().getById(sourceId)?.rawJson
+        val rule = raw?.let { (ruleParser.parse(it) as? com.novelradar.app.source.rule.RuleParseResult.Success)?.rules?.singleOrNull() }
+        return com.novelradar.app.data.download.CrawlPolicy.from(rule?.crawl)
+    }
+    val downloadStore = com.novelradar.app.data.download.RoomDownloadStore(database)
+    val downloadNotifications = com.novelradar.app.data.download.DownloadNotificationFactory(appContext)
+    val downloadRunner = com.novelradar.app.data.download.BookDownloadRunner(downloadStore, chapterRepository,
+        downloadLeases, com.novelradar.app.data.download.SourceDownloadLimiter(), ::crawlPolicy)
+    val downloads: com.novelradar.app.domain.repository.DownloadRepository = WorkManagerDownloadRepository(
+        database.downloadTaskDao(), com.novelradar.app.data.download.DownloadCoordinator(downloadStore,
+            com.novelradar.app.data.download.WorkManagerDownloadScheduler(appContext, ::crawlPolicy), downloadLeases), localChapterCleaner)
     val catalog: CatalogRepository = DefaultCatalogRepository(
         books, sourceRules, RoomChapterCatalogStore(database.chapterDao()),
         CatalogFetcher { rule, stored, hit, bookId ->

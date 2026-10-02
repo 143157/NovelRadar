@@ -80,7 +80,7 @@ fun NovelRadarApp(container: AppContainer, bootstrapState: StateFlow<SourceBoots
                 require(modelClass == LibraryViewModel::class.java)
                 @Suppress("UNCHECKED_CAST")
                 return LibraryViewModel(container.books, container.refreshShelf::refresh,
-                    container.localChapterCleaner::delete) as T
+                    container.downloads::deleteLocal) as T
             }
         }
     }

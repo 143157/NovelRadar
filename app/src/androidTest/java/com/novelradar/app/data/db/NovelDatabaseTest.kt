@@ -31,6 +31,40 @@ class NovelDatabaseTest {
 
     @After fun closeDatabase() = database.close()
 
+    @Test fun downloadedMetadataCannotBeDowngradedOrUpdatedWithStaleUrl() = runBlocking {
+        database.bookDao().upsertBookAndSource(book(), bookSource())
+        val row = chapter("c-1", 0).copy(url = "https://example.test/one", localContentState = "DOWNLOADED")
+        database.chapterDao().upsert(row)
+        assertThat(database.chapterDao().updateStoredContent("book-1", "source-1", "c-1", "https://example.test/old",
+            "CACHED", "wrong", "wrong", 1)).isEqualTo(0)
+        assertThat(database.chapterDao().updateStoredContent("book-1", "source-1", "c-1", row.url!!,
+            "CACHED", "books/book-1/source-1/c-1.txt", "abc", 20)).isEqualTo(1)
+        assertThat(database.chapterDao().getChapter("book-1", "source-1", "c-1")!!.localContentState).isEqualTo("DOWNLOADED")
+    }
+
+    @Test fun changedCatalogUrlDoesNotPreserveContentFromTheOldUrl() = runBlocking {
+        database.bookDao().upsertBookAndSource(book(), bookSource())
+        database.chapterDao().upsert(chapter("c-1", 0).copy(url = "https://example.test/old", localContentState = "DOWNLOADED",
+            localFilePath = "old", contentSha256 = "abc", contentBytes = 20))
+        database.chapterDao().replaceSnapshot("book-1", "source-1", listOf(chapter("c-1", 0).copy(url = "https://example.test/new")))
+        val current = database.chapterDao().getChapter("book-1", "source-1", "c-1")!!
+        assertThat(current.localContentState).isEqualTo("NOT_STORED")
+        assertThat(current.contentSha256).isNull()
+    }
+
+    @Test fun roomDownloadCheckpointRejectsNewGenerationAndNeverReinsertsDeletedTask() = runBlocking {
+        database.bookDao().upsertBookAndSource(book(), bookSource())
+        val store = com.novelradar.app.data.download.RoomDownloadStore(database)
+        val old = downloadTask(2).copy(workId = "work", generation = 1)
+        store.save(old)
+        store.mutate(old.taskId) { it.copy(state = "PAUSED", generation = 2) }
+        assertThat(store.checkpoint(old.copy(completedCount = 5))).isFalse()
+        assertThat(store.get(old.taskId)!!.completedCount).isEqualTo(2)
+        database.downloadTaskDao().delete(old.taskId)
+        assertThat(store.checkpoint(old)).isFalse()
+        assertThat(store.get(old.taskId)).isNull()
+    }
+
     @Test fun sourceUpsertReplacesExistingRule() = runBlocking {
         database.sourceRuleDao().upsert(sourceRule(rawJson = "{\"version\":1}"))
         database.sourceRuleDao().upsert(sourceRule(rawJson = "{\"version\":2}"))

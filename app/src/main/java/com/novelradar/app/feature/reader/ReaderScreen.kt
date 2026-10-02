@@ -171,4 +171,6 @@ private fun SourceFailure.readerMessage(): String = when (this) {
     is SourceFailure.Decode -> "章节文字无法识别，请重试"
     is SourceFailure.UnsafeRule -> "书源不可用，请返回详情检查书源"
     is SourceFailure.Unexpected -> "章节暂时无法打开，请重试"
+    is SourceFailure.Network -> "网络连接失败，请稍后重试"
+    is SourceFailure.Storage -> "本地存储不可用，请检查可用空间"
 }

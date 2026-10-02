@@ -10,6 +10,13 @@ import org.junit.rules.TemporaryFolder
 
 class AtomicChapterFileStoreTest {
     @get:Rule val temporary = TemporaryFolder()
+    @Test fun oversizedCorruptFileIsRejectedBeforeReadingAllBytes() = runBlocking {
+        val root = temporary.root.toPath()
+        val store = AtomicChapterFileStore(root)
+        val saved = store.write("book", "source", "chapter", "text")
+        java.io.RandomAccessFile(root.resolve(saved.relativePath).toFile(), "rw").use { it.setLength(8L * 1024 * 1024 + 1) }
+        assertThat(store.read("book", "source", "chapter")).isNull()
+    }
 
     @Test fun utf8RoundTripAndDeterministicPathWithHashValidation() = runBlocking {
         val store = AtomicChapterFileStore(temporary.root.toPath())

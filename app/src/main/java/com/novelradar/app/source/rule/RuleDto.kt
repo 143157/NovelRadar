@@ -67,7 +67,7 @@ data class ChapterRuleDto(
     val pagination: Boolean = false,
 )
 
-/** All interval values in the SoNovel format are seconds. */
+/** Interval values in the SoNovel format are milliseconds (passed directly to Thread.sleep). */
 data class CrawlRuleDto(
     val concurrency: Int? = null,
     val minInterval: Int? = null,
