@@ -15,6 +15,8 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -55,17 +57,19 @@ class ReaderViewModel(
     private var initialEntryPending = initialChapterId != null
 
     init {
-        positionJob = viewModelScope.launch {
-            try { progress.collectPositionChanges(positions) }
-            catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { mutableState.update { it.copy(notice = "阅读位置暂时无法自动保存，请返回前重试") } }
-        }
+        positionJob = startPositionCollection()
         viewModelScope.launch {
             try { settings.preferences.collect(::applyPreferences) }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { settingsUnavailable() }
         }
         loadJob = viewModelScope.launch { initialize() }
+    }
+
+    private fun startPositionCollection(): Job = viewModelScope.launch {
+        try { progress.collectPositionChanges(positions) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { mutableState.update { it.copy(notice = "阅读位置暂时无法自动保存，请返回前重试") } }
     }
 
     private suspend fun initialize() {
@@ -194,23 +198,28 @@ class ReaderViewModel(
     }
 
     suspend fun close(): Boolean = closeMutex.withLock {
-        if (closed) {
-            positionJob?.cancelAndJoin()
-            return@withLock true
-        }
+        if (closed) return@withLock true
         closing = true
         try {
             loadJob?.cancelAndJoin()
             prefetchJob?.cancelAndJoin()
             mutableState.update { it.copy(loading = false) }
             val saved = saveMutex.withLock {
-                persistExact().also { if (it) closed = true }
+                val result = persistExact()
+                if (result) {
+                    // Own cleanup even if rotation cancels the caller; do not seal the retained reader then.
+                    withContext(NonCancellable) { positionJob?.cancelAndJoin() }
+                    currentCoroutineContext().ensureActive()
+                    closed = true
+                }
+                result
             }
-            // Cancel and drain pending debounced writes before navigation can change the source.
-            if (saved) positionJob?.cancelAndJoin()
             saved
         } finally {
-            if (!closed) closing = false
+            if (!closed) {
+                closing = false
+                if (positionJob?.isActive != true) positionJob = startPositionCollection()
+            }
         }
     }
 

@@ -16,6 +16,8 @@ import com.novelradar.app.domain.repository.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -433,6 +435,38 @@ class ReaderViewModelTest {
         assertThat(fixture.progress.preferredSource).isEqualTo("b")
     }
 
+    @Test fun cancelledCloseDuringCollectorCleanupKeepsRetainedReaderUsableAndSaving() = runTest {
+        val fixture = Fixture()
+        val vm = fixture.create()
+        advanceUntilIdle()
+        vm.onPositionChanged(27)
+        val cleanup = CompletableDeferred<Unit>()
+        fixture.progress.collectorCleanup = cleanup
+        val closing = backgroundScope.launch { vm.close() }
+        runCurrent()
+        closing.cancel()
+        fixture.progress.collectorCleanup = null
+        cleanup.complete(Unit)
+        advanceUntilIdle()
+        runCurrent()
+        vm.onPositionChanged(70)
+        vm.saveOnStop()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.offset).isEqualTo(70)
+        assertThat(fixture.progress.exact.last().offset).isEqualTo(70)
+        assertThat(fixture.progress.changes.last().offset).isEqualTo(70)
+        vm.nextChapter()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c1")
+        assertThat(vm.close()).isTrue()
+        val count = fixture.progress.exact.size
+        fixture.progress.preferredSource = "b"
+        vm.saveOnStop()
+        advanceUntilIdle()
+        assertThat(fixture.progress.exact).hasSize(count)
+        assertThat(fixture.progress.preferredSource).isEqualTo("b")
+    }
+
     @Test fun failedCloseAfterCancellingLoadKeepsChapterNavigationAvailable() = runTest {
         val fixture = Fixture()
         val vm = fixture.create()
@@ -541,6 +575,7 @@ class ReaderViewModelTest {
         var failSave = false
         var saveGate: CompletableDeferred<Unit>? = null
         var preferredSource = "a"
+        var collectorCleanup: CompletableDeferred<Unit>? = null
         val exact = mutableListOf<ReadingLocation>()
         val changes = mutableListOf<ReadingLocation>()
         override fun progress(bookId: String): Flow<ReadingLocation?> = MutableStateFlow(initial)
@@ -551,7 +586,10 @@ class ReaderViewModelTest {
             initial = location
             preferredSource = location.sourceId
         }
-        override suspend fun collectPositionChanges(changes: Flow<ReadingLocation>) { changes.collect { this.changes += it } }
+        override suspend fun collectPositionChanges(changes: Flow<ReadingLocation>) {
+            try { changes.collect { this.changes += it } }
+            finally { withContext(NonCancellable) { collectorCleanup?.await() } }
+        }
     }
 
     class MainDispatcherRule : TestWatcher() {
