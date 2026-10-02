@@ -12,6 +12,79 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
 class BookDownloadRunnerTest {
+    @Test fun exhaustedNetworkRetryCheckpointNeverFetchesTheFailedChapterAgain() = runTest {
+        val f = Fixture()
+        f.chapters.verified.putAll(mapOf("c0" to 10L, "c2" to 10L))
+        f.store.save(exhaustedCheckpoint(networkRetryOnly = true))
+        assertThat(f.runner.run("task", "work", 1)).isEqualTo(DownloadRunResult.PARTIAL)
+        assertThat(f.chapters.fetched).isEmpty()
+        val recovered = f.store.get("task")!!
+        assertThat(recovered.networkAttempts).isEqualTo(3)
+        assertThat(recovered.failedChapterIds).isEqualTo("c1")
+        assertThat(recovered.completedCount).isEqualTo(2)
+    }
+
+    @Test fun exhaustedInitialPassStillFetchesNeverAttemptedChapterAndKeepsVerifiedFiles() = runTest {
+        val f = Fixture(); f.chapters.verified["c0"] = 10
+        f.store.save(exhaustedCheckpoint(networkRetryOnly = false))
+        assertThat(f.runner.run("task", "work", 1)).isEqualTo(DownloadRunResult.PARTIAL)
+        assertThat(f.chapters.fetched).containsExactly("c2")
+        assertThat(f.chapters.verified.keys).containsExactly("c0", "c2")
+        assertThat(f.store.get("task")!!.networkAttempts).isEqualTo(3)
+        assertThat(f.store.get("task")!!.failedChapterIds).isEqualTo("c1")
+    }
+
+    @Test fun verifiedFileCanCompleteExhaustedRetryCheckpointWithoutNetwork() = runTest {
+        val f = Fixture(); f.chapters.verified.putAll(mapOf("c0" to 10L, "c1" to 10L, "c2" to 10L))
+        f.store.save(exhaustedCheckpoint(networkRetryOnly = true))
+        assertThat(f.runner.run("task", "work", 1)).isEqualTo(DownloadRunResult.COMPLETED)
+        assertThat(f.chapters.fetched).isEmpty()
+        assertThat(f.store.get("task")!!.failedChapterIds).isEmpty()
+        assertThat(f.store.get("task")!!.networkAttempts).isEqualTo(3)
+    }
+
+    @Test fun lowerSourceAttemptLimitAlsoStopsAutomaticProcessRestartRetry() = runTest {
+        val f = Fixture(CrawlPolicy.from(CrawlRuleDto(maxAttempts = 1)))
+        f.chapters.verified.putAll(mapOf("c0" to 10L, "c2" to 10L))
+        f.store.save(exhaustedCheckpoint(networkRetryOnly = true).copy(networkAttempts = 1))
+        assertThat(f.runner.run("task", "work", 1)).isEqualTo(DownloadRunResult.PARTIAL)
+        assertThat(f.chapters.fetched).isEmpty()
+        assertThat(f.store.get("task")!!.networkAttempts).isEqualTo(1)
+    }
+
+    @Test fun initialPassNewChapterFailureDoesNotIncreaseAnExhaustedLowerSourceCap() = runTest {
+        val f = Fixture(CrawlPolicy.from(CrawlRuleDto(maxAttempts = 1)))
+        f.chapters.verified["c0"] = 10
+        f.chapters.failures["c2"] = SourceFailure.Timeout
+        f.store.save(exhaustedCheckpoint(networkRetryOnly = false).copy(networkAttempts = 1))
+        assertThat(f.runner.run("task", "work", 1)).isEqualTo(DownloadRunResult.PARTIAL)
+        assertThat(f.chapters.fetched).containsExactly("c2")
+        assertThat(f.store.get("task")!!.networkAttempts).isEqualTo(1)
+    }
+
+    @Test fun explicitNewWorkMayRetryFailedChapterAfterAutomaticCapWasReached() = runTest {
+        val f = Fixture(); f.chapters.verified.putAll(mapOf("c0" to 10L, "c2" to 10L))
+        // Mirrors the coordinator's explicit resume transition: new work/generation, cleared automatic retry IDs.
+        f.store.save(exhaustedCheckpoint(networkRetryOnly = false).copy(state = "QUEUED", retryFailedOnly = true,
+            networkFailedChapterIds = "", generation = 2, workId = "manual-work"))
+        assertThat(f.runner.run("task", "manual-work", 2)).isEqualTo(DownloadRunResult.COMPLETED)
+        assertThat(f.chapters.fetched).containsExactly("c1")
+        assertThat(f.store.get("task")!!.networkAttempts).isEqualTo(3)
+    }
+
+    @Test fun thirdLiveRoundMayAttemptAllPreviouslyFailedChaptersBeforeItEnds() = runTest {
+        val f = Fixture(); f.chapters.verified["c0"] = 10
+        f.chapters.failures.putAll(mapOf("c1" to SourceFailure.Timeout, "c2" to SourceFailure.Timeout))
+        f.store.save(exhaustedCheckpoint(networkRetryOnly = true).copy(state = "QUEUED", networkAttempts = 2,
+            failedChapterIds = "c1\nc2", networkFailedChapterIds = "c1\nc2"))
+        assertThat(f.runner.run("task", "work", 1)).isEqualTo(DownloadRunResult.PARTIAL)
+        assertThat(f.chapters.fetched).containsExactly("c1", "c2").inOrder()
+        assertThat(f.store.get("task")!!.networkAttempts).isEqualTo(3)
+    }
+
+    private fun exhaustedCheckpoint(networkRetryOnly: Boolean) = task().copy(state = "RUNNING", totalCount = 3,
+        completedCount = 1, failedCount = 1, failedChapterIds = "c1", networkFailedChapterIds = "c1",
+        currentChapterId = "c1", networkAttempts = 3, networkRetryOnly = networkRetryOnly)
     @Test fun sourceProtectionAndInvalidRulesPauseWithoutProbingLaterChapters() = runTest {
         for (error in listOf(SourceFailure.VerificationRequired, SourceFailure.UnsafeRule("TLS or source rejected"),
             SourceFailure.Http(401), SourceFailure.Http(403), SourceFailure.Http(429))) {
@@ -141,11 +214,11 @@ class BookDownloadRunnerTest {
         assertThat(intervals).containsExactly(1000L)
     }
 
-    private class Fixture {
+    private class Fixture(crawlPolicy: CrawlPolicy = CrawlPolicy.from(null)) {
         val store = MemoryDownloadStore().apply { rows["task"] = task() }
         val chapters = FakeChapters()
         val runner = BookDownloadRunner(store, chapters, BookDownloadLeases(),
-            SourceDownloadLimiter(now = { 100 }, wait = {}), policy = { CrawlPolicy.from(null) }, now = { 100 })
+            SourceDownloadLimiter(now = { 100 }, wait = {}), policy = { crawlPolicy }, now = { 100 })
     }
 
     private class FakeChapters : DownloadChapters {

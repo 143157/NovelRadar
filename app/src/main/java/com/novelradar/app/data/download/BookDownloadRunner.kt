@@ -38,6 +38,8 @@ class BookDownloadRunner(private val store: DownloadStore, private val chapters:
                 val catalogIds = catalog.map { it.chapterId }.toSet()
                 val failures = ids(task.failedChapterIds).intersect(catalogIds).toMutableSet()
                 val previousNetwork = ids(task.networkFailedChapterIds).intersect(catalogIds)
+                // A failed-chapter checkpoint may survive process death before the final PARTIAL state.
+                val exhaustedNetworkRetries = task.networkAttempts >= crawl.maxAttempts
                 val selected = when {
                     task.networkRetryOnly -> previousNetwork
                     task.retryFailedOnly -> failures.toSet()
@@ -65,7 +67,7 @@ class BookDownloadRunner(private val store: DownloadStore, private val chapters:
                     val existing = chapters.verifiedBytes(chapter)
                     var pauseReason: String? = null
                     if (existing != null) { verified[chapter.chapterId] = existing; failures.remove(chapter.chapterId); networkFailures.remove(chapter.chapterId) }
-                    else if (chapter.chapterId in selected) {
+                    else if (chapter.chapterId in selected && !(exhaustedNetworkRetries && chapter.chapterId in previousNetwork)) {
                         val requestPolicy = if (chapter.chapterId in previousNetwork) crawl.copy(
                             intervalMillis = maxOf(crawl.intervalMillis, crawl.retryIntervalMillis)) else crawl
                         val fetched = limiter.fetch(task.sourceId, requestPolicy) {
@@ -80,7 +82,7 @@ class BookDownloadRunner(private val store: DownloadStore, private val chapters:
                                 if (fetched.error.retryableNetwork()) {
                                     networkFailures += chapter.chapterId
                                     if (!countedNetworkRound) {
-                                        task = task.copy(networkAttempts = (task.networkAttempts + 1).coerceAtMost(3))
+                                        if (task.networkAttempts < crawl.maxAttempts) task = task.copy(networkAttempts = task.networkAttempts + 1)
                                         countedNetworkRound = true
                                     }
                                 } else networkFailures.remove(chapter.chapterId)
