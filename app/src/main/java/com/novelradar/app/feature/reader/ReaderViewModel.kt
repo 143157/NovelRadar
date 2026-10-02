@@ -23,6 +23,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class ReaderViewModel(
@@ -42,13 +44,18 @@ class ReaderViewModel(
         onBufferOverflow = BufferOverflow.DROP_OLDEST)
     private var loadJob: Job? = null
     private var prefetchJob: Job? = null
+    private var positionJob: Job? = null
+    private val saveMutex = Mutex()
+    private val closeMutex = Mutex()
+    private var closing = false
+    private var closed = false
     private var retryChapterId: String? = null
     private var retryOffset = 0
     private var lastEventTime = Long.MIN_VALUE
     private var initialEntryPending = initialChapterId != null
 
     init {
-        viewModelScope.launch {
+        positionJob = viewModelScope.launch {
             try { progress.collectPositionChanges(positions) }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { mutableState.update { it.copy(notice = "阅读位置暂时无法自动保存，请返回前重试") } }
@@ -87,6 +94,7 @@ class ReaderViewModel(
     }
 
     fun selectChapter(chapterId: String) {
+        if (closing || closed) return
         if (mutableState.value.chapters.none { it.chapterId == chapterId }) return
         loadJob?.cancel()
         prefetchJob?.cancel()
@@ -100,6 +108,7 @@ class ReaderViewModel(
     fun previousChapter() { mutableState.value.takeIf { it.canPrevious }?.let { selectChapter(it.chapters[it.catalogPosition - 1].chapterId) } }
 
     fun retry() {
+        if (closing || closed) return
         val target = retryChapterId
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
@@ -143,6 +152,7 @@ class ReaderViewModel(
     }
 
     fun onPositionChanged(offset: Int) {
+        if (closing || closed) return
         val current = mutableState.value
         val content = current.content ?: return
         val bounded = offset.coerceIn(0, content.content.length)
@@ -158,7 +168,11 @@ class ReaderViewModel(
     }
 
     /** Callers await this before leaving; cancellation of the debounced collector does not flush it. */
-    suspend fun saveExact(): Boolean {
+    suspend fun saveExact(): Boolean = saveMutex.withLock {
+        if (closed) true else persistExact()
+    }
+
+    private suspend fun persistExact(): Boolean {
         if (mutableState.value.content == null) return true
         return try {
             progress.saveExact(location(mutableState.value.offset))
@@ -172,17 +186,32 @@ class ReaderViewModel(
     }
 
     fun saveOnStop() {
+        if (closing || closed) return
         // Enter the protected save before route disposal can clear the ViewModelStore.
         viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
             withContext(NonCancellable) { saveExact() }
         }
     }
 
-    suspend fun close(): Boolean {
-        loadJob?.cancelAndJoin()
-        prefetchJob?.cancelAndJoin()
-        mutableState.update { it.copy(loading = false) }
-        return saveExact()
+    suspend fun close(): Boolean = closeMutex.withLock {
+        if (closed) {
+            positionJob?.cancelAndJoin()
+            return@withLock true
+        }
+        closing = true
+        try {
+            loadJob?.cancelAndJoin()
+            prefetchJob?.cancelAndJoin()
+            mutableState.update { it.copy(loading = false) }
+            val saved = saveMutex.withLock {
+                persistExact().also { if (it) closed = true }
+            }
+            // Cancel and drain pending debounced writes before navigation can change the source.
+            if (saved) positionJob?.cancelAndJoin()
+            saved
+        } finally {
+            if (!closed) closing = false
+        }
     }
 
     fun updatePreferences(transform: (ReaderPreferences) -> ReaderPreferences) {

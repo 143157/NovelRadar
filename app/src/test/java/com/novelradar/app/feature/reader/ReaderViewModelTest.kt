@@ -15,6 +15,7 @@ import com.novelradar.app.domain.model.SourceResult
 import com.novelradar.app.domain.repository.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -391,6 +392,47 @@ class ReaderViewModelTest {
         assertThat(fixture.progress.exact.last().offset).isEqualTo(27)
     }
 
+    @Test fun successfulClosePreventsDisposalAndLatePositionFromRevertingNewSourceChoice() = runTest {
+        val fixture = Fixture()
+        val vm = fixture.create()
+        advanceUntilIdle()
+        vm.onPositionChanged(27)
+        assertThat(vm.close()).isTrue()
+        val writes = fixture.progress.exact.size
+        fixture.progress.preferredSource = "b"
+        vm.onPositionChanged(80)
+        vm.saveOnStop()
+        advanceUntilIdle()
+        assertThat(fixture.progress.exact).hasSize(writes)
+        assertThat(fixture.progress.preferredSource).isEqualTo("b")
+        assertThat(vm.uiState.value.offset).isEqualTo(27)
+    }
+
+    @Test fun successfulCloseWaitsForAlreadyPendingProtectedLifecycleSave() = runTest {
+        val fixture = Fixture()
+        val vm = fixture.create()
+        advanceUntilIdle()
+        vm.onPositionChanged(27)
+        val gate = CompletableDeferred<Unit>()
+        fixture.progress.saveGate = gate
+        vm.saveOnStop()
+        fixture.progress.saveGate = null
+        var closed = false
+        backgroundScope.launch { closed = vm.close() }
+        runCurrent()
+        assertThat(closed).isFalse()
+        vm.onPositionChanged(80)
+        gate.complete(Unit)
+        advanceUntilIdle()
+        runCurrent()
+        assertThat(closed).isTrue()
+        assertThat(fixture.progress.exact.last().offset).isEqualTo(27)
+        fixture.progress.preferredSource = "b"
+        vm.saveOnStop()
+        advanceUntilIdle()
+        assertThat(fixture.progress.preferredSource).isEqualTo("b")
+    }
+
     @Test fun failedCloseAfterCancellingLoadKeepsChapterNavigationAvailable() = runTest {
         val fixture = Fixture()
         val vm = fixture.create()
@@ -498,6 +540,7 @@ class ReaderViewModelTest {
         var initial: ReadingLocation? = null
         var failSave = false
         var saveGate: CompletableDeferred<Unit>? = null
+        var preferredSource = "a"
         val exact = mutableListOf<ReadingLocation>()
         val changes = mutableListOf<ReadingLocation>()
         override fun progress(bookId: String): Flow<ReadingLocation?> = MutableStateFlow(initial)
@@ -506,6 +549,7 @@ class ReaderViewModelTest {
             check(!failSave)
             exact += location
             initial = location
+            preferredSource = location.sourceId
         }
         override suspend fun collectPositionChanges(changes: Flow<ReadingLocation>) { changes.collect { this.changes += it } }
     }
