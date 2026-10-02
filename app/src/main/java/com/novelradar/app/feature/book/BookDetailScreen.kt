@@ -58,7 +58,7 @@ fun BookDetailScreen(
         item {
             Surface(color = SignalOrange, modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(horizontal = 20.dp, vertical = 17.dp)) {
-                    TextButton(onClick = onBack) { Text("← 返回", color = InkBlack) }
+                    TextButton(onClick = onBack, enabled = !state.sourceActionPending) { Text("← 返回", color = InkBlack) }
                     Text(state.book?.bookName ?: "正在打开书籍…", color = CanvasWhite,
                         fontSize = 30.sp, fontWeight = FontWeight.Black)
                     state.book?.author?.takeIf(String::isNotBlank)?.let {
@@ -73,16 +73,16 @@ fun BookDetailScreen(
                 verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Row(Modifier.fillMaxWidth().testTag("book_primary_actions"),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onAddToShelf, modifier = Modifier.weight(1f),
+                    Button(onClick = onAddToShelf, enabled = !state.sourceActionPending, modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(containerColor = InkBlack, contentColor = CanvasWhite),
                         shape = RoundedCornerShape(8.dp)) {
                         Text(if (state.addedToShelf) "已加入书架" else "加入书架")
                     }
-                    OutlinedButton(onClick = onStartReading, enabled = canRead && state.chapters.isNotEmpty(),
+                    OutlinedButton(onClick = onStartReading, enabled = canRead && !state.sourceActionPending && state.chapters.isNotEmpty(),
                         modifier = Modifier.weight(1f), shape = RoundedCornerShape(8.dp)) {
                         Text("开始阅读")
                     }
-                    OutlinedButton(onClick = onDownload, enabled = canDownload && state.chapters.isNotEmpty(),
+                    OutlinedButton(onClick = onDownload, enabled = canDownload && !state.sourceActionPending && state.chapters.isNotEmpty(),
                         modifier = Modifier.weight(1f), shape = RoundedCornerShape(8.dp)) {
                         Text("整本下载")
                     }
@@ -98,6 +98,7 @@ fun BookDetailScreen(
             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("选择书源", color = InkBlack, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                if (state.sourceActionPending) Text("正在保存选择…", color = QuietInk, fontSize = 12.sp)
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).testTag("source_picker"),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     state.sources.forEach { source ->
@@ -122,7 +123,7 @@ fun BookDetailScreen(
                     verticalAlignment = Alignment.CenterVertically) {
                     Text("目录 · ${state.chapters.size} 章", color = InkBlack,
                         fontSize = 20.sp, fontWeight = FontWeight.Black)
-                    TextButton(onClick = onRefresh, enabled = state.selectedSourceId != null && !state.refreshing) {
+                    TextButton(onClick = onRefresh, enabled = state.selectedSourceId != null && !state.refreshing && !state.sourceActionPending) {
                         Text(if (state.refreshing) "刷新中" else "刷新目录", color = SignalOrange)
                     }
                 }
@@ -140,7 +141,7 @@ fun BookDetailScreen(
                 color = CardPaper, shape = RoundedCornerShape(8.dp),
                 border = BorderStroke(1.dp, Hairline),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
-                    .clickable(enabled = canRead) { onChapterSelected(chapter) },
+                    .clickable(enabled = canRead && !state.sourceActionPending) { onChapterSelected(chapter) },
             ) {
                 Row(Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {

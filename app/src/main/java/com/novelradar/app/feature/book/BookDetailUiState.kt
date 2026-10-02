@@ -20,6 +20,7 @@ data class BookDetailUiState(
     val warning: SourceFailure? = null,
     val notice: String? = null,
     val addedToShelf: Boolean = false,
+    val sourceActionPending: Boolean = false,
 ) {
     val visibleChapters: List<Chapter> get() {
         val keyword = normalizeIdentityPart(chapterQuery).lowercase(Locale.ROOT)

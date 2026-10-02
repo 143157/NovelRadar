@@ -1,6 +1,7 @@
 package com.novelradar.app.feature.book
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -65,6 +66,21 @@ class BookDetailScreenTest {
         compose.onNodeWithText("第一章").performClick()
         assertThat(started).isTrue()
         assertThat(selectedChapter).isEqualTo("c1")
+    }
+
+    @Test fun pendingSourceChoiceDisablesReadingAndDownloadActions() {
+        compose.setContent {
+            NovelRadarTheme {
+                BookDetailScreen(state().copy(sourceActionPending = true), onBack = {}, onSourceSelected = {},
+                    onAddToShelf = {}, onRefresh = {}, onChapterQueryChanged = {}, onToggleOrder = {},
+                    canRead = true, canDownload = true)
+            }
+        }
+        compose.onNodeWithText("开始阅读").assertIsNotEnabled()
+        compose.onNodeWithText("← 返回").assertIsNotEnabled()
+        compose.onNodeWithText("整本下载").assertIsNotEnabled()
+        compose.onNodeWithText("第一章").assertIsNotEnabled()
+        compose.onNodeWithText("正在保存选择…").assertIsDisplayed()
     }
 
     private fun state() = BookDetailUiState(

@@ -149,6 +149,43 @@ class BookDetailViewModelTest {
         assertThat(vm.uiState.value.selectedSourceId).isEqualTo("b")
     }
 
+    @Test fun pendingSelectionRejectsImmediateReadThenUsesCommittedSourceAndRejectsStaleChapter() = runTest {
+        val books = FakeBooks().apply { preferred = "a" }
+        val vm = BookDetailViewModel("book-1", FakeCatalog(), books)
+        backgroundScope.launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+        val staleChapter = vm.uiState.value.chapters.first()
+        val release = CompletableDeferred<Unit>()
+        books.beforeSelection = { release.await() }
+        vm.selectSource("b")
+        assertThat(vm.readingTarget()).isNull()
+        assertThat(vm.canLeave()).isFalse()
+        assertThat(vm.readingTarget(staleChapter)).isNull()
+        runCurrent()
+        release.complete(Unit)
+        advanceUntilIdle()
+        assertThat(vm.readingTarget()).isEqualTo(BookReadTarget("b", null))
+        assertThat(vm.canLeave()).isTrue()
+        assertThat(vm.readingTarget(staleChapter)).isNull()
+        assertThat(vm.readingTarget(vm.uiState.value.chapters.single())).isEqualTo(BookReadTarget("b", "3"))
+    }
+
+    @Test fun failedPendingSelectionReadResolvesPreviousCommittedSource() = runTest {
+        val books = FakeBooks().apply { preferred = "a" }
+        val vm = BookDetailViewModel("book-1", FakeCatalog(), books)
+        backgroundScope.launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+        books.beforeSelection = { error("disk full") }
+        vm.selectSource("b")
+        assertThat(vm.readingTarget()).isNull()
+        assertThat(vm.canLeave()).isFalse()
+        advanceUntilIdle()
+        assertThat(vm.readingTarget()).isEqualTo(BookReadTarget("a", null))
+        assertThat(vm.canLeave()).isTrue()
+        assertThat(vm.readingTarget(Chapter("other-book", "a", "1", 0, "foreign"))).isNull()
+        assertThat(vm.readingTarget(Chapter("book-1", "a", "absent", 9, "absent"))).isNull()
+    }
+
     private class FakeCatalog : CatalogRepository {
         var failRefresh = false
         override suspend fun book(bookId: String) = Book("book-1", "星河旅人|叶子", "星河旅人", "叶子")

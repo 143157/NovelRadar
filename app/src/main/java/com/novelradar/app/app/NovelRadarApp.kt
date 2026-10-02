@@ -226,11 +226,13 @@ private fun BookDetailRoute(bookId: String, container: AppContainer, onBack: () 
     }
     val model: BookDetailViewModel = viewModel(key = "book:$bookId", factory = factory)
     val state by model.uiState.collectAsStateWithLifecycle()
-    BookDetailScreen(state, onBack = onBack, onSourceSelected = model::selectSource,
+    val leave: () -> Unit = { if (model.canLeave()) onBack() }
+    BackHandler(onBack = leave)
+    BookDetailScreen(state, onBack = leave, onSourceSelected = model::selectSource,
         onAddToShelf = model::addToShelf, onRefresh = model::refresh,
         onChapterQueryChanged = model::onChapterQueryChanged, onToggleOrder = model::toggleChapterOrder,
-        canRead = true, onStartReading = { state.selectedSourceId?.let { onRead(it, null) } },
-        onChapterSelected = { chapter -> onRead(chapter.sourceId, chapter.chapterId) },
+        canRead = true, onStartReading = { model.readingTarget()?.let { onRead(it.sourceId, it.chapterId) } },
+        onChapterSelected = { chapter -> model.readingTarget(chapter)?.let { onRead(it.sourceId, it.chapterId) } },
         modifier = modifier)
 }
 

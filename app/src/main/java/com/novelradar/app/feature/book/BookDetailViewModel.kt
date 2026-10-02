@@ -3,6 +3,7 @@ package com.novelradar.app.feature.book
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.novelradar.app.domain.repository.BookRepository
+import com.novelradar.app.domain.model.Chapter
 import com.novelradar.app.domain.repository.CatalogRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -27,6 +28,7 @@ class BookDetailViewModel(
     private var catalogJob: Job? = null
     // Source writes and shelf additions retain click order, even when storage is slow.
     private var sourceActionJob: Job? = null
+    private var pendingSourceActions = 0
 
     init {
         viewModelScope.launch {
@@ -49,16 +51,19 @@ class BookDetailViewModel(
 
     fun selectSource(sourceId: String) {
         if (mutableState.value.sources.none { it.sourceId == sourceId }) return
+        beginSourceAction()
         val previous = sourceActionJob
         sourceActionJob = viewModelScope.launch {
-            previous?.join()
             try {
+                previous?.join()
                 books.selectPreferredSource(bookId, sourceId)
                 showSource(sourceId)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
                 mutableState.update { it.copy(notice = "书源选择保存失败，请重试") }
+            } finally {
+                finishSourceAction()
             }
         }
     }
@@ -97,11 +102,37 @@ class BookDetailViewModel(
     fun onChapterQueryChanged(query: String) { mutableState.update { it.copy(chapterQuery = query) } }
     fun toggleChapterOrder() { mutableState.update { it.copy(reversed = !it.reversed) } }
 
+    fun readingTarget(chapter: Chapter? = null): BookReadTarget? {
+        val current = mutableState.value
+        if (current.sourceActionPending || current.loading || current.chapters.isEmpty()) return null
+        val sourceId = current.selectedSourceId ?: return null
+        if (current.sources.none { it.bookId == bookId && it.sourceId == sourceId }) return null
+        if (chapter == null) return BookReadTarget(sourceId, null)
+        if (chapter.bookId != bookId || chapter.sourceId != sourceId) return null
+        val selected = current.chapters.firstOrNull {
+            it.bookId == bookId && it.sourceId == sourceId && it.chapterId == chapter.chapterId
+        } ?: return null
+        return BookReadTarget(sourceId, selected.chapterId)
+    }
+
+    fun canLeave(): Boolean = !mutableState.value.sourceActionPending
+
+    private fun beginSourceAction() {
+        pendingSourceActions++
+        mutableState.update { it.copy(sourceActionPending = true) }
+    }
+
+    private fun finishSourceAction() {
+        pendingSourceActions--
+        mutableState.update { it.copy(sourceActionPending = pendingSourceActions > 0) }
+    }
+
     fun addToShelf() {
+        beginSourceAction()
         val previous = sourceActionJob
         sourceActionJob = viewModelScope.launch {
-            previous?.join()
             try {
+                previous?.join()
                 val sourceId = mutableState.value.selectedSourceId ?: return@launch
                 books.addToShelf(bookId, clock(), sourceId)
                 mutableState.update { it.copy(addedToShelf = true, notice = "已加入书架") }
@@ -109,7 +140,11 @@ class BookDetailViewModel(
                 throw cancelled
             } catch (_: Exception) {
                 mutableState.update { it.copy(notice = "加入书架失败，请重试") }
+            } finally {
+                finishSourceAction()
             }
         }
     }
 }
+
+data class BookReadTarget(val sourceId: String, val chapterId: String?)
