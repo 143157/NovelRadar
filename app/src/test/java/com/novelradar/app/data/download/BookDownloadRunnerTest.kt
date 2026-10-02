@@ -12,6 +12,80 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
 class BookDownloadRunnerTest {
+    @Test fun automaticInitialRecoveryDoesNotRepeatRecordedNonNetworkFailures() = runTest {
+        for (failure in listOf(SourceFailure.Parse("content", "gone"), SourceFailure.Unexpected("oversized"),
+            SourceFailure.Decode("invalid encoding"), SourceFailure.Http(404))) {
+            val f = Fixture(); f.chapters.failures["c0"] = failure
+            f.chapters.onFetch = { if (f.chapters.fetched.last() == "c1") throw SimulatedProcessDeath() }
+            assertThat(runCatching { f.runner.run("task", "work", 1) }.exceptionOrNull()).isInstanceOf(SimulatedProcessDeath::class.java)
+            assertThat(f.store.get("task")!!.state).isEqualTo("RUNNING")
+            assertThat(f.store.get("task")!!.failedChapterIds).isEqualTo("c0")
+            f.chapters.onFetch = null; f.chapters.fetched.clear()
+            assertThat(f.freshRunner().run("task", "work", 1)).isEqualTo(DownloadRunResult.PARTIAL)
+            assertThat(f.chapters.fetched).containsExactly("c1", "c2").inOrder()
+            assertThat(f.store.get("task")!!.networkAttempts).isEqualTo(0)
+            assertThat(f.chapters.verified.keys).containsExactly("c1", "c2")
+        }
+    }
+
+    @Test fun regularManualResumeRetriesOldFailuresButItsRestartSkipsOnlyNewlyAttemptedFailures() = runTest {
+        assertManualResumeRecovery(failedOnly = false)
+    }
+
+    @Test fun failedOnlyManualResumeRetriesOldFailuresButItsRestartSkipsOnlyNewlyAttemptedFailures() = runTest {
+        assertManualResumeRecovery(failedOnly = true)
+    }
+
+    @Test fun verifiedFilesClearRecordedNonNetworkAttemptsWithoutFetching() = runTest {
+        val f = Fixture()
+        f.chapters.failures["c0"] = SourceFailure.Parse("content", "gone")
+        f.chapters.onFetch = { if (f.chapters.fetched.last() == "c1") throw SimulatedProcessDeath() }
+        runCatching { f.runner.run("task", "work", 1) }
+        assertThat(f.store.get("task")!!.attemptedNonNetworkChapterIds).isEqualTo("c0")
+        f.chapters.verified["c0"] = 10; f.chapters.onFetch = null; f.chapters.fetched.clear()
+        assertThat(f.freshRunner().run("task", "work", 1)).isEqualTo(DownloadRunResult.COMPLETED)
+        assertThat(f.chapters.fetched).containsExactly("c1", "c2").inOrder()
+        assertThat(f.store.get("task")!!.attemptedNonNetworkChapterIds).isEmpty()
+        assertThat(f.store.get("task")!!.failedChapterIds).isEmpty()
+    }
+
+    @Test fun networkFailureBecomingParseFailureIsCheckpointedAndNotRequestedOnRestart() = runTest {
+        val f = Fixture(); f.chapters.failures["c0"] = SourceFailure.Timeout
+        assertThat(f.runner.run("task", "work", 1)).isEqualTo(DownloadRunResult.RETRY)
+        f.chapters.failures["c0"] = SourceFailure.Parse("content", "gone"); f.chapters.fetched.clear()
+        assertThat(runCatching { f.freshRunner().run("task", "work", 1) { _, _ ->
+            if (f.store.get("task")!!.attemptedNonNetworkChapterIds == "c0") throw SimulatedProcessDeath()
+        } }.exceptionOrNull()).isInstanceOf(SimulatedProcessDeath::class.java)
+        assertThat(f.chapters.fetched).containsExactly("c0")
+        assertThat(f.store.get("task")!!.networkFailedChapterIds).isEmpty()
+        f.chapters.fetched.clear()
+        assertThat(f.freshRunner().run("task", "work", 1)).isEqualTo(DownloadRunResult.PARTIAL)
+        assertThat(f.chapters.fetched).isEmpty()
+        assertThat(f.store.get("task")!!.networkAttempts).isEqualTo(1)
+    }
+
+    private suspend fun assertManualResumeRecovery(failedOnly: Boolean) {
+        val f = Fixture()
+        f.chapters.failures.putAll(mapOf("c0" to SourceFailure.Parse("content", "gone"),
+            "c2" to SourceFailure.Unexpected("oversized")))
+        assertThat(f.runner.run("task", "work", 1)).isEqualTo(DownloadRunResult.PARTIAL)
+        f.coordinator.resume("task", failedOnly)
+        val manual = f.store.get("task")!!
+        assertThat(manual.generation).isEqualTo(2)
+        assertThat(manual.attemptedNonNetworkChapterIds).isEmpty()
+        f.chapters.failures.remove("c2"); f.chapters.fetched.clear()
+        assertThat(runCatching { f.freshRunner().run("task", manual.workId!!, manual.generation) { _, _ ->
+            if (f.store.get("task")!!.currentChapterId == "c0") throw SimulatedProcessDeath()
+        } }.exceptionOrNull()).isInstanceOf(SimulatedProcessDeath::class.java)
+        assertThat(f.chapters.fetched).containsExactly("c0")
+        assertThat(f.store.get("task")!!.attemptedNonNetworkChapterIds).isEqualTo("c0")
+        f.chapters.fetched.clear()
+        assertThat(f.freshRunner().run("task", manual.workId!!, manual.generation)).isEqualTo(DownloadRunResult.PARTIAL)
+        assertThat(f.chapters.fetched).containsExactly("c2")
+        assertThat(f.store.get("task")!!.failedChapterIds).isEqualTo("c0")
+        assertThat(f.chapters.verified.keys).containsExactly("c1", "c2")
+    }
+
     @Test fun exhaustedNetworkRetryCheckpointNeverFetchesTheFailedChapterAgain() = runTest {
         val f = Fixture()
         f.chapters.verified.putAll(mapOf("c0" to 10L, "c2" to 10L))
@@ -153,9 +227,9 @@ class BookDownloadRunnerTest {
         assertThat(f.runner.run("task", "work", 1)).isEqualTo(DownloadRunResult.PARTIAL)
         assertThat(f.store.get("task")!!.failedChapterIds).isEqualTo("c1")
         assertThat(f.store.get("task")!!.networkAttempts).isEqualTo(0)
-        f.store.save(f.store.get("task")!!.copy(state = "QUEUED", retryFailedOnly = true, generation = 2, workId = "new"))
+        f.coordinator.resume("task", failedOnly = true)
         f.chapters.failures.clear(); f.chapters.fetched.clear()
-        assertThat(f.runner.run("task", "new", 2)).isEqualTo(DownloadRunResult.COMPLETED)
+        assertThat(f.runner.run("task", "manual-work", 2)).isEqualTo(DownloadRunResult.COMPLETED)
         assertThat(f.chapters.fetched).containsExactly("c1")
     }
 
@@ -214,12 +288,23 @@ class BookDownloadRunnerTest {
         assertThat(intervals).containsExactly(1000L)
     }
 
-    private class Fixture(crawlPolicy: CrawlPolicy = CrawlPolicy.from(null)) {
+    private class Fixture(private val crawlPolicy: CrawlPolicy = CrawlPolicy.from(null)) {
         val store = MemoryDownloadStore().apply { rows["task"] = task() }
         val chapters = FakeChapters()
-        val runner = BookDownloadRunner(store, chapters, BookDownloadLeases(),
+        private val leases = BookDownloadLeases()
+        val coordinator = DownloadCoordinator(store, object : DownloadScheduler {
+            override fun newWorkId() = "manual-work"
+            override suspend fun enqueue(task: com.novelradar.app.data.db.entity.DownloadTaskEntity, name: String) = Unit
+            override suspend fun cancel(workId: String) = Unit
+            override suspend fun awaitTerminal(workId: String) = Unit
+            override suspend fun status(workId: String) = ScheduledStatus.TERMINAL
+        }, leases)
+        val runner = freshRunner()
+        fun freshRunner() = BookDownloadRunner(store, chapters, leases,
             SourceDownloadLimiter(now = { 100 }, wait = {}), policy = { crawlPolicy }, now = { 100 })
     }
+
+    private class SimulatedProcessDeath : Error()
 
     private class FakeChapters : DownloadChapters {
         val fetched = mutableListOf<String>(); val verified = mutableMapOf<String, Long>()

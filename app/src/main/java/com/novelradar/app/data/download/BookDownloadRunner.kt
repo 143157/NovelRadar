@@ -38,6 +38,7 @@ class BookDownloadRunner(private val store: DownloadStore, private val chapters:
                 val catalogIds = catalog.map { it.chapterId }.toSet()
                 val failures = ids(task.failedChapterIds).intersect(catalogIds).toMutableSet()
                 val previousNetwork = ids(task.networkFailedChapterIds).intersect(catalogIds)
+                val attemptedNonNetwork = ids(task.attemptedNonNetworkChapterIds).intersect(catalogIds).toMutableSet()
                 // A failed-chapter checkpoint may survive process death before the final PARTIAL state.
                 val exhaustedNetworkRetries = task.networkAttempts >= crawl.maxAttempts
                 val selected = when {
@@ -54,10 +55,12 @@ class BookDownloadRunner(private val store: DownloadStore, private val chapters:
                     currentCoroutineContext().ensureActive()
                     if (owned(taskId, workId, generation) == null || leases.isDeleting(task.bookId)) return@withRunner DownloadRunResult.OBSOLETE
                     val existing = chapters.verifiedBytes(chapter)
-                    if (existing != null) { verified[chapter.chapterId] = existing; failures.remove(chapter.chapterId); networkFailures.remove(chapter.chapterId) }
+                    if (existing != null) { verified[chapter.chapterId] = existing; failures.remove(chapter.chapterId); networkFailures.remove(chapter.chapterId); attemptedNonNetwork.remove(chapter.chapterId) }
                 }
                 task = task.copy(state = "RUNNING", totalCount = catalog.size,
-                    completedCount = verified.size, bytesDownloaded = verified.values.sum(), failedCount = failures.size)
+                    completedCount = verified.size, bytesDownloaded = verified.values.sum(), failedCount = failures.size,
+                    failedChapterIds = encode(failures), networkFailedChapterIds = encode(networkFailures),
+                    attemptedNonNetworkChapterIds = encode(attemptedNonNetwork))
                 if (!store.checkpoint(task)) return@withRunner DownloadRunResult.OBSOLETE
                 progress(verified.size, catalog.size)
                 for (chapter in catalog) {
@@ -66,8 +69,9 @@ class BookDownloadRunner(private val store: DownloadStore, private val chapters:
                     // Recheck immediately before each fetch: a reader may have cached this chapter since the scan.
                     val existing = chapters.verifiedBytes(chapter)
                     var pauseReason: String? = null
-                    if (existing != null) { verified[chapter.chapterId] = existing; failures.remove(chapter.chapterId); networkFailures.remove(chapter.chapterId) }
-                    else if (chapter.chapterId in selected && !(exhaustedNetworkRetries && chapter.chapterId in previousNetwork)) {
+                    if (existing != null) { verified[chapter.chapterId] = existing; failures.remove(chapter.chapterId); networkFailures.remove(chapter.chapterId); attemptedNonNetwork.remove(chapter.chapterId) }
+                    else if (chapter.chapterId in selected && chapter.chapterId !in attemptedNonNetwork &&
+                        !(exhaustedNetworkRetries && chapter.chapterId in previousNetwork)) {
                         val requestPolicy = if (chapter.chapterId in previousNetwork) crawl.copy(
                             intervalMillis = maxOf(crawl.intervalMillis, crawl.retryIntervalMillis)) else crawl
                         val fetched = limiter.fetch(task.sourceId, requestPolicy) {
@@ -76,16 +80,17 @@ class BookDownloadRunner(private val store: DownloadStore, private val chapters:
                             chapters.download(chapter)
                         } ?: return@withRunner DownloadRunResult.OBSOLETE
                         when (fetched) {
-                            is SourceResult.Success -> { verified[chapter.chapterId] = fetched.value; newBytes += fetched.value; failures.remove(chapter.chapterId); networkFailures.remove(chapter.chapterId) }
+                            is SourceResult.Success -> { verified[chapter.chapterId] = fetched.value; newBytes += fetched.value; failures.remove(chapter.chapterId); networkFailures.remove(chapter.chapterId); attemptedNonNetwork.remove(chapter.chapterId) }
                             is SourceResult.Failure -> {
                                 failures += chapter.chapterId
                                 if (fetched.error.retryableNetwork()) {
+                                    attemptedNonNetwork.remove(chapter.chapterId)
                                     networkFailures += chapter.chapterId
                                     if (!countedNetworkRound) {
                                         if (task.networkAttempts < crawl.maxAttempts) task = task.copy(networkAttempts = task.networkAttempts + 1)
                                         countedNetworkRound = true
                                     }
-                                } else networkFailures.remove(chapter.chapterId)
+                                } else { networkFailures.remove(chapter.chapterId); attemptedNonNetwork += chapter.chapterId }
                                 if (fetched.error is SourceFailure.Storage) pauseReason = "本地存储不可用，请检查空间后继续下载"
                                 if (fetched.error.sourceBlocked()) pauseReason = "书源访问受限或规则不可用，请检查书源后继续下载"
                             }
@@ -93,7 +98,8 @@ class BookDownloadRunner(private val store: DownloadStore, private val chapters:
                     }
                     task = task.copy(state = if (pauseReason == null) "RUNNING" else "PAUSED", completedCount = verified.size,
                         failedCount = failures.size, failedChapterIds = encode(failures),
-                        networkFailedChapterIds = encode(networkFailures), bytesDownloaded = verified.values.sum(),
+                        networkFailedChapterIds = encode(networkFailures), attemptedNonNetworkChapterIds = encode(attemptedNonNetwork),
+                        bytesDownloaded = verified.values.sum(),
                         currentChapterId = chapter.chapterId, bytesPerSecond = if (pauseReason != null) 0 else newBytes * 1000 / (now() - started).coerceAtLeast(1000),
                         lastError = pauseReason, updatedAtEpochMillis = now())
                     if (!store.checkpoint(task)) return@withRunner DownloadRunResult.OBSOLETE

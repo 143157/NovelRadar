@@ -37,6 +37,8 @@ data class DownloadTaskEntity(
     @ColumnInfo(defaultValue = "0") val networkAttempts: Int = 0,
     @ColumnInfo(defaultValue = "''") val failedChapterIds: String = "",
     @ColumnInfo(defaultValue = "''") val networkFailedChapterIds: String = "",
+    /** Non-network failures already attempted by this work/generation, not historical failures. */
+    @ColumnInfo(defaultValue = "''") val attemptedNonNetworkChapterIds: String = "",
     @ColumnInfo(defaultValue = "0") val bytesDownloaded: Long = 0,
     val currentChapterId: String? = null,
     @ColumnInfo(defaultValue = "0") val bytesPerSecond: Long = 0,

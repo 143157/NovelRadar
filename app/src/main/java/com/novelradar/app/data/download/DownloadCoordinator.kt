@@ -30,8 +30,8 @@ class DownloadCoordinator(private val store: DownloadStore, private val schedule
         val timestamp = now()
         val task = DownloadTaskEntity(newTaskId(), bookId, sourceId, "QUEUED", 0, 0, 0,
             timestamp, timestamp, workId = scheduler.newWorkId(), generation = 1, allowMetered = allowMetered)
-        store.save(task)
-        enqueue(task)
+        // Once ownership is durable, caller cancellation must not strand a missing request.
+        withContext(NonCancellable) { store.save(task); enqueue(task) }
         DownloadStart.Started(task.taskId)
     }
 
@@ -53,15 +53,26 @@ class DownloadCoordinator(private val store: DownloadStore, private val schedule
         }
         current.workId?.let { scheduler.cancel(it); scheduler.awaitTerminal(it) }
         leases.awaitRunner(current.bookId)
-        val resumed = store.mutate(taskId) { latest -> latest.copy(state = "QUEUED", workId = scheduler.newWorkId(),
-            generation = latest.generation + 1, retryFailedOnly = failedOnly,
-            networkRetryOnly = false, networkFailedChapterIds = "", lastError = null, bytesPerSecond = 0, updatedAtEpochMillis = now()) } ?: return@withLock
-        enqueue(resumed)
+        withContext(NonCancellable) {
+            val resumed = store.mutate(taskId) { latest -> latest.copy(state = "QUEUED", workId = scheduler.newWorkId(),
+                generation = latest.generation + 1, retryFailedOnly = failedOnly,
+                networkRetryOnly = false, networkFailedChapterIds = "", attemptedNonNetworkChapterIds = "",
+                lastError = null, bytesPerSecond = 0, updatedAtEpochMillis = now()) } ?: return@withContext
+            enqueue(resumed)
+        }
     }
 
     private suspend fun enqueue(task: DownloadTaskEntity) {
         try { scheduler.enqueue(task, uniqueName(task.bookId, task.sourceId)) }
-        catch (cancelled: CancellationException) { throw cancelled }
+        catch (cancelled: CancellationException) {
+            // A scheduler can create the work before reporting cancellation. Invalidate only this owner.
+            withContext(NonCancellable) {
+                store.transitionOwned(task) { it.copy(state = "PAUSED", bytesPerSecond = 0,
+                    lastError = "下载调度已中断，请继续下载", updatedAtEpochMillis = now()) }
+                task.workId?.let { scheduler.cancel(it) }
+            }
+            throw cancelled
+        }
         catch (_: Exception) {
             store.transitionOwned(task) { it.copy(state = "PAUSED", lastError = "下载调度失败，请重试", updatedAtEpochMillis = now()) }
         }
@@ -97,7 +108,8 @@ class DownloadCoordinator(private val store: DownloadStore, private val schedule
         }, clean = {
             for (task in store.all().filter { it.bookId == bookId }) store.mutate(task.taskId) { it.copy(
                 completedCount = 0, failedCount = 0, bytesDownloaded = 0, failedChapterIds = "",
-                networkFailedChapterIds = "", currentChapterId = null, bytesPerSecond = 0, updatedAtEpochMillis = now()) }
+                networkFailedChapterIds = "", attemptedNonNetworkChapterIds = "", currentChapterId = null,
+                bytesPerSecond = 0, updatedAtEpochMillis = now()) }
             clean()
         }) }
     }

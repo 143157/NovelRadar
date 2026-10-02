@@ -4,11 +4,85 @@ import com.google.common.truth.Truth.assertThat
 import com.novelradar.app.data.db.entity.DownloadTaskEntity
 import com.novelradar.app.domain.repository.DownloadStart
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
 class DownloadCoordinatorTest {
+    @Test fun cancellationDuringStartEnqueueCompletesThePersistedOwnershipHandoff() = runTest {
+        val f = Fixture(); val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        f.scheduler.beforeEnqueue = { entered.complete(Unit); release.await() }
+        val starting = async { f.coordinator.start("book", "source") }
+        entered.await(); starting.cancel(); release.complete(Unit); starting.join()
+        val saved = f.store.all().single()
+        assertThat(saved.state).isEqualTo("QUEUED")
+        assertThat(f.scheduler.createdIds).containsExactly(saved.workId)
+    }
+
+    @Test fun cancellationDuringResumeEnqueueCompletesTheNewOwnershipHandoff() = runTest {
+        val f = Fixture(); f.store.save(task().copy(state = "PAUSED"))
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        f.scheduler.beforeEnqueue = { entered.complete(Unit); release.await() }
+        val resuming = async { f.coordinator.resume("task") }
+        entered.await(); resuming.cancel(); release.complete(Unit); resuming.join()
+        val saved = f.store.get("task")!!
+        assertThat(saved.generation).isEqualTo(2)
+        assertThat(saved.state).isEqualTo("QUEUED")
+        assertThat(f.scheduler.createdIds).containsExactly(saved.workId)
+    }
+
+    @Test fun cancellationImmediatelyAfterStartPersistsStillEnqueuesThePreparedRequest() = runTest {
+        val f = Fixture(); val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        f.store.afterPersist = { entered.complete(Unit); release.await() }
+        val starting = async { f.coordinator.start("book", "source") }
+        entered.await(); starting.cancel(); release.complete(Unit); starting.join()
+        assertThat(f.scheduler.createdIds).containsExactly(f.store.all().single().workId)
+    }
+
+    @Test fun cancellationImmediatelyAfterResumePersistsStillEnqueuesThePreparedRequest() = runTest {
+        val f = Fixture(); f.store.save(task().copy(state = "PAUSED"))
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        f.store.afterPersist = { entered.complete(Unit); release.await() }
+        val resuming = async { f.coordinator.resume("task") }
+        entered.await(); resuming.cancel(); release.complete(Unit); resuming.join()
+        assertThat(f.scheduler.createdIds).containsExactly(f.store.get("task")!!.workId)
+    }
+
+    @Test fun schedulerCancellationAfterWorkCreationPausesAndCancelsThatWorkBeforePropagating() = runTest {
+        for (resume in listOf(false, true)) {
+            val f = Fixture()
+            if (resume) f.store.save(task().copy(state = "PAUSED"))
+            f.scheduler.afterWorkCreated = { throw CancellationException("scheduler canceled after creation") }
+            val failure = runCatching {
+                if (resume) f.coordinator.resume("task") else f.coordinator.start("book", "source")
+            }.exceptionOrNull()
+            assertThat(failure).isInstanceOf(CancellationException::class.java)
+            val saved = f.store.all().single()
+            assertThat(saved.state).isEqualTo("PAUSED")
+            assertThat(saved.lastError).isNotEmpty()
+            assertThat(f.scheduler.canceledIds).contains(saved.workId)
+            assertThat(f.scheduler.createdIds).containsExactly(saved.workId)
+            f.scheduler.afterWorkCreated = null
+            f.coordinator.resume(saved.taskId)
+            assertThat(f.store.get(saved.taskId)!!.state).isEqualTo("QUEUED")
+            assertThat(f.scheduler.createdIds).hasSize(2)
+        }
+    }
+
+    @Test fun canceledEnqueueCompensationNeverOverridesOrCancelsANewerOwner() = runTest {
+        val f = Fixture()
+        f.scheduler.afterWorkCreated = {
+            val saved = f.store.all().single()
+            f.store.rows[saved.taskId] = saved.copy(workId = "new-owner", generation = saved.generation + 1)
+            throw CancellationException("old scheduler canceled")
+        }
+        assertThat(runCatching { f.coordinator.start("book", "source") }.exceptionOrNull()).isInstanceOf(CancellationException::class.java)
+        assertThat(f.store.all().single().workId).isEqualTo("new-owner")
+        assertThat(f.store.all().single().state).isEqualTo("QUEUED")
+        assertThat(f.scheduler.canceledIds).containsExactly("work-1")
+    }
+
     @Test fun startedDeletionFinishesCleanupEvenIfCallerIsCanceled() = runTest {
         val f = Fixture()
         f.coordinator.start("book", "source")
@@ -148,18 +222,21 @@ internal class MemoryDownloadStore : DownloadStore {
     val checkpoints = mutableListOf<DownloadTaskEntity>()
     override suspend fun all() = rows.values.toList()
     var beforeReadReturn: ((DownloadTaskEntity) -> Unit)? = null
+    var afterPersist: (suspend () -> Unit)? = null
     override suspend fun get(id: String): DownloadTaskEntity? {
         val old = rows[id] ?: return null
         val hook = beforeReadReturn; beforeReadReturn = null
         hook?.invoke(old)
         return old
     }
-    override suspend fun save(task: DownloadTaskEntity) { rows[task.taskId] = task }
+    override suspend fun save(task: DownloadTaskEntity) { rows[task.taskId] = task; afterPersist?.invoke() }
     override suspend fun mutate(id: String, transform: (DownloadTaskEntity) -> DownloadTaskEntity): DownloadTaskEntity? {
         val old = rows[id] ?: return null
         val hook = beforeReadReturn; beforeReadReturn = null
         hook?.invoke(old)
-        return transform(rows[id]!!).also { rows[id] = it }
+        val updated = transform(rows[id]!!)
+        rows[id] = updated; afterPersist?.invoke()
+        return updated
     }
     override suspend fun checkpoint(task: DownloadTaskEntity): Boolean {
         val current = rows[task.taskId] ?: return false
@@ -174,14 +251,20 @@ private class FakeScheduler(private val store: MemoryDownloadStore) : DownloadSc
     var persistedBeforeEnqueue = false; var failEnqueue = false
     var stateWhenCanceled: String? = null
     var status = ScheduledStatus.TERMINAL
+    val createdIds = mutableListOf<String>(); val canceledIds = mutableListOf<String>()
+    var beforeEnqueue: (suspend () -> Unit)? = null
+    var afterWorkCreated: (suspend () -> Unit)? = null
     private var sequence = 0
     override fun newWorkId() = "work-${++sequence}"
     override suspend fun enqueue(task: DownloadTaskEntity, name: String) {
         names += name; ids += task.workId!!; metered += task.allowMetered
         persistedBeforeEnqueue = store.get(task.taskId) == task
         if (failEnqueue) error("enqueue failed")
+        beforeEnqueue?.invoke()
+        createdIds += task.workId
+        afterWorkCreated?.invoke()
     }
-    override suspend fun cancel(workId: String) { stateWhenCanceled = store.all().firstOrNull { it.workId == workId }?.state }
+    override suspend fun cancel(workId: String) { canceledIds += workId; stateWhenCanceled = store.all().firstOrNull { it.workId == workId }?.state }
     override suspend fun awaitTerminal(workId: String) = Unit
     override suspend fun status(workId: String) = status
 }

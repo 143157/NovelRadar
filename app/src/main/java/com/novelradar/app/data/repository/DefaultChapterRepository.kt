@@ -69,6 +69,7 @@ class DefaultChapterRepository(
     override suspend fun catalog(bookId: String, sourceId: String) = chapters.getChapters(bookId, sourceId)
     override suspend fun verifiedBytes(chapter: ChapterEntity): Long? = contentLeases.withContent(chapter.bookId) {
         loadLocks.getOrPut(ChapterKey(chapter.bookId, chapter.sourceId, chapter.chapterId)) { Mutex() }.withLock {
+            ensureCurrent()
             val current = chapters.getChapter(chapter.bookId, chapter.sourceId, chapter.chapterId)
                 ?.takeIf { it.url == chapter.url } ?: return@withLock null
             val content = verifiedContent(current) ?: return@withLock null
@@ -82,6 +83,7 @@ class DefaultChapterRepository(
     override suspend fun download(chapter: ChapterEntity): SourceResult<Long> = try {
         contentLeases.withContent(chapter.bookId) {
             loadLocks.getOrPut(ChapterKey(chapter.bookId, chapter.sourceId, chapter.chapterId)) { Mutex() }.withLock {
+                ensureCurrent()
                 val current = chapters.getChapter(chapter.bookId, chapter.sourceId, chapter.chapterId)
                 if (current == null || current.url != chapter.url) return@withLock SourceResult.Failure(SourceFailure.UnsafeRule("Chapter changed while downloading"))
                 when (val loaded = loadChapterLocked(chapter.bookId, chapter.sourceId, chapter.chapterId, prefetch = false, download = true)) {
@@ -103,6 +105,7 @@ class DefaultChapterRepository(
         try {
             contentLeases.withContent(bookId) {
                 loadLocks.getOrPut(ChapterKey(bookId, sourceId, chapterId)) { Mutex() }.withLock {
+                    ensureCurrent()
                     loadChapterLocked(bookId, sourceId, chapterId, prefetch)
                 }
             }

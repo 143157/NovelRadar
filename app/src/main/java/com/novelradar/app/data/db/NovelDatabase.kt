@@ -20,7 +20,7 @@ import com.novelradar.app.data.db.entity.SourceRuleEntity
         ReadingProgressEntity::class,
         DownloadTaskEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class NovelDatabase : RoomDatabase() {
@@ -31,6 +31,13 @@ abstract class NovelDatabase : RoomDatabase() {
 
     companion object {
         const val NAME = "novel-radar.db"
+        val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE download_tasks ADD COLUMN attemptedNonNetworkChapterIds TEXT NOT NULL DEFAULT ''")
+                // Version 3 cannot distinguish this run's attempts from historical failures safely.
+                db.execSQL("UPDATE download_tasks SET state = 'PAUSED', bytesPerSecond = 0, lastError = '下载升级后请继续下载' WHERE state IN ('QUEUED', 'RUNNING')")
+            }
+        }
         val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE download_tasks ADD COLUMN generation INTEGER NOT NULL DEFAULT 0")

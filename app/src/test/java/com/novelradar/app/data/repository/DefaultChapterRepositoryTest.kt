@@ -28,6 +28,56 @@ import org.junit.rules.TemporaryFolder
 class DefaultChapterRepositoryTest {
     @get:Rule val temporary = TemporaryFolder()
 
+    @Test fun verifiedCachedChapterReadsWhileAnotherChapterDownloadFetchIsStalled() = runBlocking {
+        val files = AtomicChapterFileStore(temporary.root.toPath())
+        val saved = files.write("book", "source", "cached", "已验证的正文")
+        val cached = chapter("cached", 0).copy(localContentState = "CACHED", localFilePath = saved.relativePath,
+            contentSha256 = saved.sha256, contentBytes = saved.byteCount)
+        val downloading = chapter("downloading", 1)
+        val dao = FakeChapterDao(cached, downloading)
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        val repository = DefaultChapterRepository(dao, files, { row ->
+            assertThat(row.chapterId).isEqualTo("downloading")
+            entered.complete(Unit); release.await(); SourceResult.Success("下载正文")
+        })
+        val download = async { repository.download(downloading) }
+        entered.await()
+        try {
+            val loaded = withTimeoutOrNull(2_000) { repository.loadChapter("book", "source", "cached") }
+            assertThat(loaded).isNotNull()
+            val local = (loaded as SourceResult.Success).value
+            assertThat(local.content).isEqualTo("已验证的正文")
+            assertThat(local.origin).isEqualTo(ChapterOrigin.Cached)
+            assertThat(download.isCompleted).isFalse()
+        } finally { release.complete(Unit); download.await() }
+    }
+
+    @Test fun queuedSameChapterReadIsRejectedAfterDeletionStartsAndCannotResurrectFiles() = runBlocking {
+        val leases = com.novelradar.app.data.download.BookDownloadLeases()
+        val files = AtomicChapterFileStore(temporary.root.toPath())
+        val dao = FakeChapterDao(chapter("one", 0))
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        var fetches = 0
+        val repository = DefaultChapterRepository(dao, files, {
+            fetches++; entered.complete(Unit); release.await(); SourceResult.Success("正文")
+        }, contentLeases = leases)
+        val active = async { repository.download(chapter("one", 0)) }
+        entered.await()
+        val queued = async { repository.loadChapter("book", "source", "one") }
+        kotlinx.coroutines.yield()
+        val cleaner = com.novelradar.app.data.files.LocalChapterCleaner(files, dao::clearStoredMetadata)
+        val deletion = async { leases.deleting("book", stop = {}, clean = { cleaner.delete("book") }) }
+        kotlinx.coroutines.yield()
+        assertThat(leases.isDeleting("book")).isTrue()
+        release.complete(Unit)
+        active.await()
+        assertThat(queued.await()).isInstanceOf(SourceResult.Failure::class.java)
+        deletion.await()
+        assertThat(fetches).isEqualTo(1)
+        assertThat(files.read("book", "source", "one")).isNull()
+        assertThat(dao.getChapter("book", "source", "one")!!.localContentState).isEqualTo("NOT_STORED")
+    }
+
     @Test fun deletionWaitsNonCancellableOldWriteAndStaleWorkerCannotResurrectFiles() = runBlocking {
         val leases = com.novelradar.app.data.download.BookDownloadLeases()
         val realFiles = AtomicChapterFileStore(temporary.root.toPath())

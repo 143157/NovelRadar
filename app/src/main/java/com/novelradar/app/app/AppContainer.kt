@@ -57,7 +57,7 @@ class AppContainer(
         appContext,
         NovelDatabase::class.java,
         NovelDatabase.NAME,
-    ).addMigrations(NovelDatabase.MIGRATION_1_2, NovelDatabase.MIGRATION_2_3).build()
+    ).addMigrations(NovelDatabase.MIGRATION_1_2, NovelDatabase.MIGRATION_2_3, NovelDatabase.MIGRATION_3_4).build()
 
     val httpClient = OkHttpClient()
     val ruleParser = RuleJsonParser()
