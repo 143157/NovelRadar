@@ -230,25 +230,25 @@ Task 4 implementation evidence (2026-10-01): committed in `9bb86f8`, `ff26e27`, 
 - Test: `app/src/test/java/com/novelradar/app/feature/library/LibraryViewModelTest.kt`
 - Test: `app/src/test/java/com/novelradar/app/domain/library/RefreshShelfUseCaseTest.kt`
 
-- [ ] **Step 1: Write failing shelf tests**
+- [x] **Step 1: Write failing shelf tests**
 
 Test add/remove, continue-reading order, progress percentage, unread chapter count from the selected source, refresh concurrency three, partial refresh failures, and opening the last position.
 
-- [ ] **Step 2: Verify failure**
+- [x] **Step 2: Verify failure**
 
 Run: `.\gradlew.bat :app:testDebugUnitTest --tests "*.library.*"`
 
 Expected: FAIL.
 
-- [ ] **Step 3: Implement shelf observation and refresh**
+- [x] **Step 3: Implement shelf observation and refresh**
 
 Join shelf, book, selected source, progress, and chapter counts in a repository projection. `RefreshShelfUseCase` refreshes only the selected source per book with semaphore three and preserves old update counts on failure while recording a warning.
 
-- [ ] **Step 4: Implement shelf UI**
+- [x] **Step 4: Implement shelf UI**
 
 Show `继续阅读` first, then a two-column cover grid with title, last chapter, percentage, and orange update badge. Long press opens remove/delete-download options; removal never deletes downloaded files without a separate checked action.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `.\gradlew.bat :app:testDebugUnitTest --tests "*.library.*"`
 
@@ -258,6 +258,8 @@ Expected: PASS.
 git add app/src/main/java/com/novelradar/app/feature/library app/src/main/java/com/novelradar/app/domain/library app/src/test
 git commit -m "feat: add bookshelf and update checks"
 ```
+
+Task 5 implementation evidence (2026-10-02): committed in `62551d5`, `0477117`, `dad9405`, `9f5fe1d`, and `f3610bd`; separate specification and code-quality reviews passed. The current reports contain 262 unit tests across 35 suites with zero failures/errors. Independent verification of `testDebugUnitTest`, `lintDebug`, `assembleDebug`, and `compileDebugAndroidTestSources` exited successfully; lint has zero errors and seven existing warnings. Shelf selection and last-read time are persisted, source changes block stale navigation while pending, and terminal reader closure drains old saves without freezing a retained reader when rotation cancels closure. Room migration and Compose runtime tests remain unexecuted on Android. Download-worker cancellation must be connected to the separate file-deletion action when workers are added.
 
 ## Task 6: Implement resumable whole-book downloads
 
