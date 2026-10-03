@@ -322,25 +322,25 @@ Task 6 implementation evidence (2026-10-03): committed in `0d1e016`, `2ed79d0`, 
 - Test: `app/src/test/java/com/novelradar/app/feature/downloads/DownloadsViewModelTest.kt`
 - Test: `app/src/androidTest/java/com/novelradar/app/feature/downloads/DownloadsScreenTest.kt`
 
-- [ ] **Step 1: Write failing task-action tests**
+- [x] **Step 1: Write failing task-action tests**
 
 Cover queued, running, paused, completed, partial failure, retry, cancel confirmation, delete-files confirmation, and notification-permission prompt events.
 
-- [ ] **Step 2: Verify failure**
+- [x] **Step 2: Verify failure**
 
 Run: `.\gradlew.bat :app:testDebugUnitTest --tests "*.DownloadsViewModelTest"`
 
 Expected: FAIL.
 
-- [ ] **Step 3: Implement state and actions**
+- [x] **Step 3: Implement state and actions**
 
 Observe all download tasks and map them to display rows with completed/total, percentage, failed count, bytes, current chapter, speed, and allowed actions. Actions delegate to `DownloadRepository`; ViewModel never calls WorkManager directly.
 
-- [ ] **Step 4: Implement download cards**
+- [x] **Step 4: Implement download cards**
 
 Use thick bordered cards, orange progress for running, green complete, and visible pause/resume/retry buttons. A completed item opens the book; a partial-failure item exposes failed-chapter retry. Destructive cancellation/deletion uses confirmation dialogs.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run:
 
@@ -356,7 +356,11 @@ git add app/src/main/java/com/novelradar/app/feature/downloads app/src/test app/
 git commit -m "feat: add offline download management UI"
 ```
 
+Task 7 implementation evidence (2026-10-04): committed in `d6c8e3a` and `44d534b`; independent specification and code-quality reviews passed, including re-review of a completion/stop race exposed by the new UI. The stop transaction now rejects stale user pause/cancel requests after a worker commits completion, while explicit book-wide deletion retains its separate stop/drain/cleanup path. Root directly observed the regression RED reports (four coordinator failures and one request-feedback failure), then the focused GREEN reports. Independent verification of all four milestone commands exited successfully; the final XML contains 348 tests across 40 suites with zero failures/errors. Lint reports six existing warnings and zero errors. The persistent new-task network default, per-task confirmation, notification-permission handoff, and actual download tab/details entry are connected. Six new Compose tests compiled but did not run on Android. APK signature verification passed with the Android Debug certificate, minSdk 26 and targetSdk 36; a stable test-only copy and its hash are documented in `docs/test-apk-notes.md`. This is not the locally signed Release deliverable or a verified device installation.
+
 ## Task 8: Add safe cross-source chapter fallback
+
+Dependency reconciliation (2026-10-04): finish Task 1's remaining detail refresh, cover, and introduction work before integrating fallback. Source identity evidence must distinguish the selected source's actual parsed title/author from values borrowed from the canonical `Book`; the latter cannot prove a candidate author's identity. Unknown or mismatched authors must not be silently treated as matching. Preserve existing book keys and chapter IDs. This changes execution order within the already-approved scope, not the acceptance criteria.
 
 **Files:**
 - Create: `app/src/main/java/com/novelradar/app/domain/reader/ChapterMatcher.kt`
@@ -396,7 +400,7 @@ git commit -m "feat: offer safe source fallback while reading"
 
 ## Task 9: Close the reader/download milestone
 
-Scope reconciliation (2026-10-02): before closing this milestone, finish Task 1's detail refresh, cover, and introduction rendering. Also cover the approved design's cumulative cache limit and persistent download-network default (design sections 5.4 and 6.6); limiting each prefetch to two chapters alone does not bound total cached storage. Cache eviction must never delete `DOWNLOADED` chapters or reading history, and must coordinate with chapter writes. Preserve the already-persisted chapter IDs when finishing detail work. These are remaining approved-design requirements, not implemented features.
+Scope reconciliation (2026-10-02, updated 2026-10-04): before closing this milestone, finish Task 1's detail refresh, cover, and introduction rendering. Also cover the approved design's cumulative cache limit (design sections 5.4 and 6.6); limiting each prefetch to two chapters alone does not bound total cached storage. The persistent new-task download-network default is now implemented and reviewed in Task 7. Cache eviction must never delete `DOWNLOADED` chapters or reading history, and must coordinate with chapter writes. Preserve the already-persisted chapter IDs when finishing detail work. Detail completion and the cumulative cache limit remain requirements, not implemented features.
 
 **Files:**
 - Create: `app/src/test/java/com/novelradar/app/OfflineReadingIntegrationTest.kt`
