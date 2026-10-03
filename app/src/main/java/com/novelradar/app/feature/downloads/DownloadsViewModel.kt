@@ -134,7 +134,7 @@ class DownloadsViewModel(private val downloads: DownloadRepository,
                     DownloadAction.PAUSE -> "已请求暂停"
                     DownloadAction.CONTINUE -> "已请求继续，等待系统调度"
                     DownloadAction.RETRY_FAILED -> "已请求重试失败章节，等待系统调度"
-                    DownloadAction.CANCEL -> "已取消任务，已保存正文仍保留"
+                    DownloadAction.CANCEL -> "已请求取消，已保存正文仍保留"
                     DownloadAction.DELETE_FILES -> "本书所有书源的本地正文已删除"
                     DownloadAction.OPEN -> ""
                 })

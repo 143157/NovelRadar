@@ -76,6 +76,7 @@ class DownloadsViewModelTest {
         vm.dismissConfirmation(); vm.confirmAction(); advanceUntilIdle()
         assertThat(f.downloads.actions).isEmpty()
         vm.action("task", DownloadAction.CANCEL); vm.confirmAction(); advanceUntilIdle()
+        assertThat(vm.uiState.value.notice).isEqualTo("已请求取消，已保存正文仍保留")
         vm.action("task", DownloadAction.DELETE_FILES)
         assertThat(vm.uiState.value.confirmation?.action).isEqualTo(DownloadAction.DELETE_FILES)
         vm.confirmAction(); advanceUntilIdle()

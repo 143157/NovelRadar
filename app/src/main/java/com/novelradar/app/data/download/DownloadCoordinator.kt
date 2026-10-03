@@ -35,13 +35,20 @@ class DownloadCoordinator(private val store: DownloadStore, private val schedule
         DownloadStart.Started(task.taskId)
     }
 
-    suspend fun pause(taskId: String) = operations.withLock { stop(taskId, "PAUSED") }
-    suspend fun cancel(taskId: String) = operations.withLock { stop(taskId, "CANCELED") }
+    suspend fun pause(taskId: String) = operations.withLock { stop(taskId, "PAUSED", PAUSABLE) }
+    suspend fun cancel(taskId: String) = operations.withLock { stop(taskId, "CANCELED", UNFINISHED) }
 
-    private suspend fun stop(taskId: String, state: String) {
-        val current = store.mutate(taskId) { latest -> latest.copy(state = state, generation = latest.generation + 1,
-            bytesPerSecond = 0, updatedAtEpochMillis = now()) } ?: return
-        current.workId?.let { scheduler.cancel(it) }
+    private suspend fun stop(taskId: String, state: String, allowedStates: Set<String>?) {
+        var changed = false
+        val current = store.mutate(taskId) { latest ->
+            if (allowedStates != null && latest.state !in allowedStates) latest
+            else {
+                changed = true
+                latest.copy(state = state, generation = latest.generation + 1,
+                    bytesPerSecond = 0, updatedAtEpochMillis = now())
+            }
+        } ?: return
+        if (changed) current.workId?.let { scheduler.cancel(it) }
     }
 
     suspend fun resume(taskId: String, failedOnly: Boolean = false) = operations.withLock {
@@ -102,7 +109,8 @@ class DownloadCoordinator(private val store: DownloadStore, private val schedule
     suspend fun deleteLocal(bookId: String, clean: suspend () -> Unit) = operations.withLock {
         withContext(NonCancellable) { leases.deleting(bookId, stop = {
             for (task in store.all().filter { it.bookId == bookId }) {
-                stop(task.taskId, "CANCELED")
+                // Explicit book-wide deletion also revokes completed owners before draining content.
+                stop(task.taskId, "CANCELED", allowedStates = null)
                 task.workId?.let { scheduler.awaitTerminal(it) }
             }
         }, clean = {
@@ -115,6 +123,7 @@ class DownloadCoordinator(private val store: DownloadStore, private val schedule
     }
 
     companion object {
+        private val PAUSABLE = setOf("QUEUED", "RUNNING")
         private val UNFINISHED = setOf("QUEUED", "RUNNING", "PAUSED", "PARTIAL")
         fun uniqueName(bookId: String, sourceId: String) = "book-download:$bookId:$sourceId"
         private fun validId(id: String) = id.length in 1..128 && ".." !in id && id != "." && Regex("[A-Za-z0-9._-]+").matches(id)

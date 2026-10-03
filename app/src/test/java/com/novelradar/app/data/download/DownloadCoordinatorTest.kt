@@ -2,14 +2,136 @@ package com.novelradar.app.data.download
 
 import com.google.common.truth.Truth.assertThat
 import com.novelradar.app.data.db.entity.DownloadTaskEntity
+import com.novelradar.app.data.files.AtomicChapterFileStore
+import com.novelradar.app.data.files.LocalChapterCleaner
 import com.novelradar.app.domain.repository.DownloadStart
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.test.runTest
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 class DownloadCoordinatorTest {
+    @get:Rule val temporary = TemporaryFolder()
+
+    @Test fun pauseDoesNotDowngradeWorkerCompletionAtTheTransactionalCommitBoundary() = runTest {
+        val f = Fixture(); val running = progressTask("RUNNING")
+        f.store.save(running)
+        val completed = completedTask(running)
+        f.store.beforeMutateLatest = { assertThat(f.store.checkpoint(completed)).isTrue() }
+
+        f.coordinator.pause(running.taskId)
+
+        assertThat(f.store.get(running.taskId)).isEqualTo(completed)
+        assertThat(f.scheduler.canceledIds).isEmpty()
+        assertThat(f.coordinator.start("book", "another-source")).isInstanceOf(DownloadStart.Started::class.java)
+    }
+
+    @Test fun cancelDoesNotDowngradeWorkerCompletionAtTheTransactionalCommitBoundary() = runTest {
+        val f = Fixture(); val running = progressTask("RUNNING")
+        f.store.save(running)
+        val completed = completedTask(running)
+        f.store.beforeMutateLatest = { assertThat(f.store.checkpoint(completed)).isTrue() }
+
+        f.coordinator.cancel(running.taskId)
+
+        assertThat(f.store.get(running.taskId)).isEqualTo(completed)
+        assertThat(f.scheduler.canceledIds).isEmpty()
+        assertThat(f.coordinator.start("book", "another-source")).isInstanceOf(DownloadStart.Started::class.java)
+    }
+
+    @Test fun pauseIsAnExactNoOpForPausedPartialCompletedCanceledAndUnknownRows() = runTest {
+        for (state in listOf("PAUSED", "PARTIAL", "COMPLETED", "CANCELED", "UNKNOWN")) {
+            val f = Fixture(); val saved = progressTask(state)
+            f.store.save(saved)
+            f.coordinator.pause(saved.taskId)
+            // Equality checks every field, including generation, work owner, counters and metadata.
+            assertThat(f.store.get(saved.taskId)).isEqualTo(saved)
+            assertThat(f.scheduler.canceledIds).isEmpty()
+        }
+    }
+
+    @Test fun cancelIsAnExactNoOpForCompletedCanceledAndUnknownRows() = runTest {
+        for (state in listOf("COMPLETED", "CANCELED", "UNKNOWN")) {
+            val f = Fixture(); val saved = progressTask(state)
+            f.store.save(saved)
+            f.coordinator.cancel(saved.taskId)
+            assertThat(f.store.get(saved.taskId)).isEqualTo(saved)
+            assertThat(f.scheduler.canceledIds).isEmpty()
+        }
+    }
+
+    @Test fun allowedUserStopsInvalidateTheOldGenerationAndPreserveAllProgressFields() = runTest {
+        for ((pause, states) in listOf(true to listOf("QUEUED", "RUNNING"),
+            false to listOf("QUEUED", "RUNNING", "PAUSED", "PARTIAL"))) {
+            for (state in states) {
+                val f = Fixture(); val old = progressTask(state)
+                f.store.save(old)
+                if (pause) f.coordinator.pause(old.taskId) else f.coordinator.cancel(old.taskId)
+                assertThat(f.store.get(old.taskId)).isEqualTo(old.copy(
+                    state = if (pause) "PAUSED" else "CANCELED", generation = old.generation + 1,
+                    bytesPerSecond = 0, updatedAtEpochMillis = 100))
+                assertThat(f.scheduler.canceledIds).containsExactly(old.workId)
+                assertThat(f.store.checkpoint(completedTask(old))).isFalse()
+            }
+        }
+    }
+
+    @Test fun explicitCompletedBookDeletionCancelsOldWorkAndDrainsRunnerAndContentEvenIfCallerCancels() = runTest {
+        val f = Fixture(); val first = completedTask(progressTask("RUNNING"))
+        val second = first.copy(taskId = "other-source-task", sourceId = "b", workId = "other-source-work")
+        val unrelated = first.copy(taskId = "other-book-task", bookId = "other-book", workId = "other-book-work")
+        f.store.save(first); f.store.save(second); f.store.save(unrelated)
+        val files = AtomicChapterFileStore(temporary.root.toPath())
+        files.write("book", "source", "downloaded", "已下载正文")
+        files.write("book", "b", "cached", "阅读缓存正文")
+        files.write("other-book", "source", "keep", "保留正文")
+        val cleared = mutableListOf<String>()
+        val cleaner = LocalChapterCleaner(files) { cleared += it }
+        val runnerEntered = CompletableDeferred<Unit>(); val runnerRelease = CompletableDeferred<Unit>()
+        val contentEntered = CompletableDeferred<Unit>(); val contentRelease = CompletableDeferred<Unit>()
+        val terminalEntered = CompletableDeferred<Unit>(); val terminalRelease = CompletableDeferred<Unit>()
+        val runner = async { f.leases.withRunner("book") { runnerEntered.complete(Unit); runnerRelease.await() } }
+        val content = async { f.leases.withContent("book") { contentEntered.complete(Unit); contentRelease.await() } }
+        runnerEntered.await(); contentEntered.await()
+        f.scheduler.beforeAwaitTerminal = { terminalEntered.complete(Unit); terminalRelease.await() }
+        var cleaned = false
+        val deleting = async { f.coordinator.deleteLocal("book") {
+            currentCoroutineContext().ensureActive()
+            cleaner.delete("book"); cleaned = true
+        } }
+        terminalEntered.await(); deleting.cancel(); testScheduler.runCurrent()
+        assertThat(cleaned).isFalse()
+        assertThat(files.read("book", "source", "downloaded")).isEqualTo("已下载正文")
+        terminalRelease.complete(Unit); testScheduler.runCurrent()
+        assertThat(f.scheduler.canceledIds).containsExactly(first.workId, second.workId).inOrder()
+        assertThat(f.scheduler.awaitedIds).containsExactly(first.workId, second.workId).inOrder()
+        assertThat(f.store.get(first.taskId)).isEqualTo(first.copy(state = "CANCELED",
+            generation = first.generation + 1, bytesPerSecond = 0, updatedAtEpochMillis = 100))
+        assertThat(f.store.get(second.taskId)!!.state).isEqualTo("CANCELED")
+        assertThat(f.leases.isDeleting("book")).isTrue()
+        assertThat(runCatching { f.leases.withContent("book") {} }.isFailure).isTrue()
+        runnerRelease.complete(Unit); runner.await(); testScheduler.runCurrent()
+        assertThat(cleaned).isFalse()
+        contentRelease.complete(Unit); content.await(); deleting.join()
+        assertThat(cleaned).isTrue()
+        assertThat(f.leases.isDeleting("book")).isFalse()
+        for (old in listOf(first, second)) assertThat(f.store.get(old.taskId)).isEqualTo(old.copy(
+            state = "CANCELED", generation = old.generation + 1, completedCount = 0, failedCount = 0,
+            bytesDownloaded = 0, failedChapterIds = "", networkFailedChapterIds = "",
+            attemptedNonNetworkChapterIds = "", currentChapterId = null, bytesPerSecond = 0,
+            updatedAtEpochMillis = 100))
+        assertThat(f.store.get(unrelated.taskId)).isEqualTo(unrelated)
+        assertThat(files.read("book", "source", "downloaded")).isNull()
+        assertThat(files.read("book", "b", "cached")).isNull()
+        assertThat(files.read("other-book", "source", "keep")).isEqualTo("保留正文")
+        assertThat(cleared).containsExactly("book")
+    }
+
     @Test fun cancellationDuringStartEnqueueCompletesThePersistedOwnershipHandoff() = runTest {
         val f = Fixture(); val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
         f.scheduler.beforeEnqueue = { entered.complete(Unit); release.await() }
@@ -212,6 +334,18 @@ class DownloadCoordinatorTest {
         val leases = BookDownloadLeases()
         val coordinator = DownloadCoordinator(store, scheduler, leases, now = { 100L }, newTaskId = { "task-${store.rows.size}" })
     }
+
+    private fun progressTask(state: String) = task().copy(state = state, totalCount = 10,
+        completedCount = 9, failedCount = 1, generation = 7, allowMetered = true,
+        retryFailedOnly = true, networkRetryOnly = true, networkAttempts = 2,
+        failedChapterIds = "last", networkFailedChapterIds = "last", attemptedNonNetworkChapterIds = "previous",
+        bytesDownloaded = 4096, currentChapterId = "penultimate", bytesPerSecond = 512,
+        lastError = "已保存失败原因", updatedAtEpochMillis = 50)
+
+    private fun completedTask(old: DownloadTaskEntity) = old.copy(state = "COMPLETED", completedCount = 10,
+        failedCount = 0, bytesDownloaded = 8192, currentChapterId = "last", bytesPerSecond = 0,
+        failedChapterIds = "", networkFailedChapterIds = "", attemptedNonNetworkChapterIds = "",
+        lastError = null, updatedAtEpochMillis = 90)
 }
 
 internal fun task() = DownloadTaskEntity("task", "book", "source", "QUEUED", 0, 0, 0, 1, 1,
@@ -223,6 +357,7 @@ internal class MemoryDownloadStore : DownloadStore {
     override suspend fun all() = rows.values.toList()
     var beforeReadReturn: ((DownloadTaskEntity) -> Unit)? = null
     var afterPersist: (suspend () -> Unit)? = null
+    var beforeMutateLatest: (suspend (DownloadTaskEntity) -> Unit)? = null
     override suspend fun get(id: String): DownloadTaskEntity? {
         val old = rows[id] ?: return null
         val hook = beforeReadReturn; beforeReadReturn = null
@@ -231,6 +366,9 @@ internal class MemoryDownloadStore : DownloadStore {
     }
     override suspend fun save(task: DownloadTaskEntity) { rows[task.taskId] = task; afterPersist?.invoke() }
     override suspend fun mutate(id: String, transform: (DownloadTaskEntity) -> DownloadTaskEntity): DownloadTaskEntity? {
+        val observed = rows[id] ?: return null
+        val checkpointHook = beforeMutateLatest; beforeMutateLatest = null
+        checkpointHook?.invoke(observed)
         val old = rows[id] ?: return null
         val hook = beforeReadReturn; beforeReadReturn = null
         hook?.invoke(old)
@@ -252,8 +390,10 @@ private class FakeScheduler(private val store: MemoryDownloadStore) : DownloadSc
     var stateWhenCanceled: String? = null
     var status = ScheduledStatus.TERMINAL
     val createdIds = mutableListOf<String>(); val canceledIds = mutableListOf<String>()
+    val awaitedIds = mutableListOf<String>()
     var beforeEnqueue: (suspend () -> Unit)? = null
     var afterWorkCreated: (suspend () -> Unit)? = null
+    var beforeAwaitTerminal: (suspend (String) -> Unit)? = null
     private var sequence = 0
     override fun newWorkId() = "work-${++sequence}"
     override suspend fun enqueue(task: DownloadTaskEntity, name: String) {
@@ -265,6 +405,6 @@ private class FakeScheduler(private val store: MemoryDownloadStore) : DownloadSc
         afterWorkCreated?.invoke()
     }
     override suspend fun cancel(workId: String) { canceledIds += workId; stateWhenCanceled = store.all().firstOrNull { it.workId == workId }?.state }
-    override suspend fun awaitTerminal(workId: String) = Unit
+    override suspend fun awaitTerminal(workId: String) { awaitedIds += workId; beforeAwaitTerminal?.invoke(workId) }
     override suspend fun status(workId: String) = status
 }
