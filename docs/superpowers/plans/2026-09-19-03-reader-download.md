@@ -12,6 +12,10 @@
 
 ## Task 1: Load book details and per-source table of contents
 
+Completion contract (2026-10-04): retain the existing catalog/reading/download integration and add the missing detail refresh, cover, and introduction. Separate actual page title/author evidence from `SearchHit` values borrowed for display; absent page fields remain unknown. Detail updates change only nonblank cover/introduction metadata, preserve canonical book ID/key/title/author, and atomically validate the expected book snapshot plus source ownership/detail URL before saving. A canceled or superseded request must not write back. Catalog and details refresh independently, keeping successful data when the other fails; cached chapters remain usable while details are pending or fail.
+
+If actual nonblank page identity conflicts with known canonical identity, reject the metadata update and explicitly mark that source as mismatched. In the current detail ViewModel session, a proven mismatch prevents reading/download targets and chapter actions; switching away and back or an unknown/failed refresh cannot bypass it. Only a successful, complete actual title/author match clears that source's session flag. Late old-source/request results cannot mark a newer source incorrectly. This evidence is ephemeral, not a new persisted author-verification claim; fallback must obtain fresh identity after restart. Unknown fields alone do not block explicit reading of a cached catalog. Reuse the existing policy-checked `NovelCover`/`SafeCoverFetcher` and actual application graph rather than supplying remote URLs directly to the image loader. No automatic source switch, reading-history rewrite, or reader-session closure is part of this task.
+
 **Files:**
 - Create: `app/src/main/java/com/novelradar/app/domain/repository/CatalogRepository.kt`
 - Create: `app/src/main/java/com/novelradar/app/data/repository/DefaultCatalogRepository.kt`
@@ -45,7 +49,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Implement repository and transactions**
 
-`CatalogRepository` exposes `book(bookId)`, `sources(bookId)`, `catalog(bookId, sourceId, forceRefresh)`, and `refreshDetails`. Persist a complete catalog in one transaction only after parsing succeeds; keep previous snapshot on failure. Assign stable `chapterId = sha256(resolvedUrl).take(20)`.
+`CatalogRepository` exposes `book(bookId)`, `sources(bookId)`, `catalog(bookId, sourceId, forceRefresh)`, and `refreshDetails`. Persist a complete catalog in one transaction only after parsing succeeds; keep previous snapshot on failure. Preserve the established `chapterId` representation: the first 20 bytes of SHA-256(resolved URL), encoded as 40 hexadecimal characters, not a new 20-character ID.
 
 - [ ] **Step 4: Write ViewModel tests and implement state**
 
