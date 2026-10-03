@@ -27,3 +27,11 @@ Network restrictions must be explicit at task creation. The conservative default
 ## Verification boundaries
 
 JVM tests can prove coordinator ordering, retry policy, file verification, and checkpoint logic. Compiling Android worker and UI tests does not prove scheduling, foreground-service startup, notification permissions, or process-death behavior. Record those separately as unverified until an actual Android target is available.
+
+## Implemented core checkpoint (2026-10-03)
+
+The download core is committed in `0d1e016`, `2ed79d0`, and `21f0025` and has passed separate specification and code-quality reviews. Pause, cancellation, generation-owned checkpoints, explicit manual retry, startup reconciliation, foreground declarations, and coordinated local-file deletion are implemented. Source crawl integers are consumed as milliseconds. Verified cached files can be promoted without refetching, and a slow download of one chapter no longer blocks another chapter's cached read in the same book.
+
+Room version 4 records which non-network failures were already attempted in the current execution generation. A new explicit resume clears that marker; an automatic restart does not. The 3→4 migration preserves existing metadata and makes old active tasks recoverably paused rather than guessing their current-generation attempts.
+
+Independent verification ran all four milestone commands successfully, followed by a forced unit-test rerun: 316 tests, 38 suites, zero failures/errors; lint reports seven existing warnings and zero errors. Host SQLite checks also covered the actual 2→3→4 and 3→4 migration SQL in memory. No actual Android Worker/Room/notification behavior or APK installation has been verified; a fresh `adb devices -l` check found no attached target. The download screen, details-page start flow, persistent network default, and runtime notification permission handling are still pending Task 7, so this checkpoint is not the final APK handoff.

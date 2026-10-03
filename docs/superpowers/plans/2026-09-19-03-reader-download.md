@@ -273,29 +273,29 @@ Task 5 implementation evidence (2026-10-02): committed in `62551d5`, `0477117`, 
 - Test: `app/src/test/java/com/novelradar/app/data/download/DownloadCoordinatorTest.kt`
 - Test: `app/src/androidTest/java/com/novelradar/app/data/download/BookDownloadWorkerTest.kt`
 
-- [ ] **Step 1: Write failing coordinator tests**
+- [x] **Step 1: Write failing coordinator tests**
 
 Test one active task per book/source, deterministic unique-work name, resume skipping verified files, retrying only failed chapters, pause state, cancellation preserving completed files, disk-full pause, and progress checkpoint after every chapter.
 
-- [ ] **Step 2: Verify failure**
+- [x] **Step 2: Verify failure**
 
 Run: `.\gradlew.bat :app:testDebugUnitTest --tests "*.DownloadCoordinatorTest"`
 
 Expected: FAIL.
 
-- [ ] **Step 3: Implement the coordinator**
+- [x] **Step 3: Implement the coordinator**
 
-Use unique work name `book-download:<bookId>:<sourceId>` with `ExistingWorkPolicy.KEEP`. Persist task state before enqueuing. Enforce `NetworkType.CONNECTED`, optionally `UNMETERED` from user setting. Pause cancels work but keeps task as `PAUSED`; resume enqueues the same unique name after prior work reaches terminal state.
+Use unique work name `book-download:<bookId>:<sourceId>` with `ExistingWorkPolicy.KEEP`. Persist task state before enqueuing. Enforce `UNMETERED` by default, and `NetworkType.CONNECTED` only after explicit user opt-in for mobile data. Pause cancels work but keeps task as `PAUSED`; resume enqueues the same unique name after prior work reaches terminal state.
 
-- [ ] **Step 4: Implement the foreground worker**
+- [x] **Step 4: Implement the foreground worker**
 
 `BookDownloadWorker` loads the persisted catalog, skips chapters whose file hash verifies, downloads sequentially with source-configured delay, updates Room after each chapter, and calls `setForeground` with completed/total. Return `Result.retry()` only for retryable network failures and only while persisted attempt count is below three; parse errors are recorded per chapter and the worker continues.
 
-- [ ] **Step 5: Add notification/channel and service declarations**
+- [x] **Step 5: Add notification/channel and service declarations**
 
-Create the download notification channel on application startup. Declare foreground service type `dataSync` as required by the WorkManager foreground-service integration, request `POST_NOTIFICATIONS` only on API 33+, and continue downloads without notification permission using platform-permitted task behavior while explaining reduced visibility.
+Create the download notification channel on application startup. Declare foreground service type `dataSync` as required by the WorkManager foreground-service integration and expose the API-33+ notification-permission requirement. Connect the actual `POST_NOTIFICATIONS` prompt and the reduced-visibility explanation in Task 7's UI; permission denial must not gate task creation or delete completed files. Downloads remain subject to platform scheduling limits.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run:
 
@@ -310,6 +310,8 @@ Expected: PASS/compile success.
 git add app/src/main/java/com/novelradar/app/domain/repository/DownloadRepository.kt app/src/main/java/com/novelradar/app/data/download app/src/main/java/com/novelradar/app/data/repository/WorkManagerDownloadRepository.kt app/src/main/AndroidManifest.xml app/src/test app/src/androidTest
 git commit -m "feat: add resumable whole-book downloads"
 ```
+
+Task 6 implementation evidence (2026-10-03): committed in `0d1e016`, `2ed79d0`, and `21f0025`; separate specification and quality reviews passed. Independent verification of `testDebugUnitTest`, `lintDebug`, `assembleDebug`, and `compileDebugAndroidTestSources` exited successfully. An additional forced unit-test rerun executed 26 Gradle tasks and produced 316 tests across 38 suites with zero failures/errors; lint has zero errors and seven existing warnings. Shared content permits allow cached reading during a different chapter's network fetch, while deletion still drains actual writes. Current-generation failure markers preserve manual retry without repeating recorded non-network failures automatically. Durable task scheduling is cancellation-safe. Room version 4 is registered with explicit migrations and leaves old active download tasks recoverably paused after upgrade. Host in-memory SQLite checks of the actual 2→3→4 and 3→4 SQL matched seven tables and six task states, preserving shelf/progress and download metadata; these are not Android Room runtime tests. Android Worker, notification, migration, and device-installation tests remain unexecuted. The actual download tab, start dialog, persistent network default, and runtime notification prompt remain Task 7 work.
 
 ## Task 7: Build download management UI
 
