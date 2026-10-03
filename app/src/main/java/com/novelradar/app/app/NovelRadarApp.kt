@@ -1,6 +1,8 @@
 package com.novelradar.app.app
 
+import android.Manifest
 import android.net.Uri
+import android.os.Build
 import android.security.NetworkSecurityPolicy
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
@@ -15,6 +17,9 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -43,6 +48,10 @@ import com.novelradar.app.feature.book.BookDetailScreen
 import com.novelradar.app.feature.book.BookDetailViewModel
 import com.novelradar.app.feature.library.LibraryScreen
 import com.novelradar.app.feature.library.LibraryViewModel
+import com.novelradar.app.feature.downloads.DownloadsViewModel
+import com.novelradar.app.feature.downloads.DownloadsScreen
+import com.novelradar.app.feature.downloads.DownloadsEvent
+import com.novelradar.app.feature.downloads.DownloadStartDialog
 import com.novelradar.app.domain.model.ReaderPreferences
 import com.novelradar.app.feature.reader.ReaderScreen
 import com.novelradar.app.feature.reader.ReaderViewModel
@@ -99,6 +108,20 @@ fun NovelRadarApp(container: AppContainer, bootstrapState: StateFlow<SourceBoots
     }
     val searchViewModel: SearchViewModel = viewModel(factory = searchFactory)
     val searchState by searchViewModel.uiState.collectAsStateWithLifecycle()
+    val downloadsFactory = remember(container) {
+        object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                require(modelClass == DownloadsViewModel::class.java)
+                @Suppress("UNCHECKED_CAST")
+                return DownloadsViewModel(container.downloads, container.books, container.catalog, container.downloadSettings) as T
+            }
+        }
+    }
+    val downloadsViewModel: DownloadsViewModel = viewModel(factory = downloadsFactory)
+    val downloadsState by downloadsViewModel.uiState.collectAsStateWithLifecycle()
+    val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission(),
+        downloadsViewModel::notificationPermissionResult)
+    val snackbarHost = remember { SnackbarHostState() }
     val sourcesFactory = remember(container) {
         object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -143,9 +166,34 @@ fun NovelRadarApp(container: AppContainer, bootstrapState: StateFlow<SourceBoots
             }
         }
     }
+    LaunchedEffect(downloadsViewModel) {
+        downloadsViewModel.events.collect { event ->
+            when (event) {
+                DownloadsEvent.RequestNotificationPermission -> if (downloadsViewModel.claimNotificationPermissionRequest()) {
+                    if (Build.VERSION.SDK_INT >= 33) notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    else downloadsViewModel.notificationPermissionResult(granted = true)
+                }
+                is DownloadsEvent.OpenReader -> {
+                    selectedIndex = 2
+                    selectedBookId = event.target.bookId
+                    readerSourceId = event.target.sourceId
+                    readerChapterId = null
+                    readerFromShelf = true
+                    readerSession++
+                }
+            }
+        }
+    }
+    LaunchedEffect(downloadsState.notice) {
+        downloadsState.notice?.let {
+            snackbarHost.showSnackbar(it, duration = SnackbarDuration.Long)
+            downloadsViewModel.clearNotice()
+        }
+    }
     BackHandler(enabled = selectedBookId != null && readerSourceId == null) { selectedBookId = null }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHost) },
         containerColor = if (readerSourceId != null) readerColors(readerPreferences.theme).first else MaterialTheme.colorScheme.background,
         bottomBar = {
             if (selectedBookId == null) {
@@ -176,7 +224,7 @@ fun NovelRadarApp(container: AppContainer, bootstrapState: StateFlow<SourceBoots
                     readerFromShelf = false
                 },
                 { readerChapterId = null }, modifier)
-            selectedBookId != null -> BookDetailRoute(requireNotNull(selectedBookId), container, { selectedBookId = null },
+            selectedBookId != null -> BookDetailRoute(requireNotNull(selectedBookId), container, downloadsViewModel, { selectedBookId = null },
                 { sourceId, chapterId -> readerFromShelf = false; readerSourceId = sourceId; readerChapterId = chapterId; readerSession++ }, modifier)
             selectedIndex == 0 -> LibraryScreen(libraryState, libraryViewModel::open, libraryViewModel::refresh,
                 libraryViewModel::requestRemoval, libraryViewModel::confirmRemoval, libraryViewModel::cancelRemoval,
@@ -192,6 +240,10 @@ fun NovelRadarApp(container: AppContainer, bootstrapState: StateFlow<SourceBoots
                 bootstrapFailed = preparation == SourceBootstrapState.Failed,
                 modifier = modifier,
             )
+            selectedIndex == 2 -> DownloadsScreen(downloadsState, downloadsViewModel::action,
+                downloadsViewModel::confirmAction, downloadsViewModel::dismissConfirmation,
+                downloadsViewModel::setDefaultNetwork, downloadsViewModel::retryList,
+                onSearch = { selectedIndex = 1 }, modifier = modifier)
             selectedIndex == 3 -> SourceManagerScreen(
                 state = sourceState,
                 onImport = sourceViewModel::requestImport,
@@ -213,7 +265,7 @@ fun NovelRadarApp(container: AppContainer, bootstrapState: StateFlow<SourceBoots
 }
 
 @Composable
-private fun BookDetailRoute(bookId: String, container: AppContainer, onBack: () -> Unit,
+private fun BookDetailRoute(bookId: String, container: AppContainer, downloads: DownloadsViewModel, onBack: () -> Unit,
     onRead: (String, String?) -> Unit, modifier: Modifier) {
     val factory = remember(bookId, container) {
         object : ViewModelProvider.Factory {
@@ -226,14 +278,26 @@ private fun BookDetailRoute(bookId: String, container: AppContainer, onBack: () 
     }
     val model: BookDetailViewModel = viewModel(key = "book:$bookId", factory = factory)
     val state by model.uiState.collectAsStateWithLifecycle()
-    val leave: () -> Unit = { if (model.canLeave()) onBack() }
+    val downloadState by downloads.uiState.collectAsStateWithLifecycle()
+    val leave: () -> Unit = {
+        if (model.canLeave() && !downloads.uiState.value.startBusy) { downloads.dismissStart(); onBack() }
+    }
     BackHandler(onBack = leave)
     BookDetailScreen(state, onBack = leave, onSourceSelected = model::selectSource,
         onAddToShelf = model::addToShelf, onRefresh = model::refresh,
         onChapterQueryChanged = model::onChapterQueryChanged, onToggleOrder = model::toggleChapterOrder,
         canRead = true, onStartReading = { model.readingTarget()?.let { onRead(it.sourceId, it.chapterId) } },
+        canDownload = !downloadState.startBusy && downloadState.startRequest == null,
+        onDownload = { model.readingTarget()?.let { downloads.requestStart(bookId, it.sourceId) } },
         onChapterSelected = { chapter -> model.readingTarget(chapter)?.let { onRead(it.sourceId, it.chapterId) } },
         modifier = modifier)
+    downloadState.startRequest?.takeIf { it.bookId == bookId }?.let { request ->
+        DownloadStartDialog(request, downloads::chooseStartNetwork, onConfirm = {
+            val liveTarget = model.readingTarget()
+            downloads.confirmStart(if (liveTarget != null) bookId else null, liveTarget?.sourceId,
+                container.downloadNotifications.permissionRequestRequired())
+        }, onDismiss = downloads::dismissStart)
+    }
 }
 
 @Composable

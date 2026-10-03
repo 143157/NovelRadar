@@ -10,6 +10,7 @@ import com.novelradar.app.data.bootstrap.DataStoreBundledRuleVersionStore
 import com.novelradar.app.data.db.NovelDatabase
 import com.novelradar.app.data.files.AtomicChapterFileStore
 import com.novelradar.app.data.preferences.DataStoreReaderSettingsRepository
+import com.novelradar.app.data.preferences.DataStoreDownloadSettingsRepository
 import com.novelradar.app.data.repository.RoomBookRepository
 import com.novelradar.app.data.repository.RoomReadingProgressRepository
 import com.novelradar.app.data.repository.DefaultCatalogRepository
@@ -69,6 +70,11 @@ class AppContainer(
         appContext.preferencesDataStoreFile("novel-radar-reader.preferences_pb")
     }
     val readerSettings: ReaderSettingsRepository = DataStoreReaderSettingsRepository(readerPreferenceStore)
+    private val downloadPreferenceStore = PreferenceDataStoreFactory.create {
+        appContext.preferencesDataStoreFile("novel-radar-download.preferences_pb")
+    }
+    val downloadSettings: com.novelradar.app.domain.repository.DownloadSettingsRepository =
+        DataStoreDownloadSettingsRepository(downloadPreferenceStore)
     val importRules = ImportRulesUseCase(
         appContext.contentResolver,
         RuleImporter(sourceRules, ruleParser, ruleValidator),
