@@ -39,8 +39,15 @@ class RoomBookRepository(private val dao: BookDao) : BookRepository {
 
     override suspend fun getBook(bookId: String): Book? = dao.getBook(bookId)?.toDomain()
 
+    override suspend fun detailsAreCurrent(expectedBook: Book, expectedSource: BookSource): Boolean =
+        dao.detailsAreCurrent(
+            BookEntity(expectedBook.bookId, expectedBook.normalizedBookKey, expectedBook.bookName,
+                expectedBook.author, expectedBook.coverUrl, expectedBook.introduction),
+            BookSourceEntity(expectedSource.bookId, expectedSource.sourceId, expectedSource.detailUrl),
+        )
+
     override suspend fun saveDetails(expectedBook: Book, expectedSource: BookSource, details: BookDetails): Book? {
-        if (details.book.bookId != expectedBook.bookId || details.identity.conflictsWith(expectedBook)) return null
+        if (details.warning != null || details.book.bookId != expectedBook.bookId || details.identity.conflictsWith(expectedBook)) return null
         return dao.saveDetailsIfCurrent(
             BookEntity(expectedBook.bookId, expectedBook.normalizedBookKey, expectedBook.bookName,
                 expectedBook.author, expectedBook.coverUrl, expectedBook.introduction),

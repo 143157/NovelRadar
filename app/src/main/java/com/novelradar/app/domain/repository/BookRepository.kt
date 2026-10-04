@@ -32,6 +32,8 @@ interface BookRepository {
     suspend fun getBook(bookId: String): Book?
     /** Returns the existing book with optional metadata enriched, or null if the snapshots are no longer current. */
     suspend fun saveDetails(expectedBook: Book, expectedSource: BookSource, details: BookDetails): Book? = null
+    /** Read-only snapshot check before publishing page identity; false also means verification is unavailable. */
+    suspend fun detailsAreCurrent(expectedBook: Book, expectedSource: BookSource): Boolean = false
     fun observeSources(bookId: String): Flow<List<BookSource>>
     fun observeShelf(): Flow<List<ShelfBook>>
     suspend fun addToShelf(bookId: String, atEpochMillis: Long)

@@ -25,6 +25,13 @@ interface BookDao {
         upsertSource(source)
     }
 
+    /** Parsed identity is valid only for the book and source URL that began this request. */
+    @Transaction
+    suspend fun detailsAreCurrent(expectedBook: BookEntity, expectedSource: BookSourceEntity): Boolean {
+        if (expectedSource.bookId != expectedBook.bookId || getBook(expectedBook.bookId) != expectedBook) return false
+        return getSource(expectedBook.bookId, expectedSource.sourceId)?.detailUrl == expectedSource.detailUrl
+    }
+
     /** Compare the request snapshots and enrich only this existing book, in one transaction. */
     @Transaction
     suspend fun saveDetailsIfCurrent(

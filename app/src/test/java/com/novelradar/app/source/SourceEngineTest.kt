@@ -18,6 +18,7 @@ import com.novelradar.app.source.rule.RuleDto
 import com.novelradar.app.source.rule.SearchRuleDto
 import com.novelradar.app.source.rule.TocRuleDto
 import com.novelradar.app.source.script.ScriptExecutor
+import com.novelradar.app.source.script.QuickJsScriptExecutor
 import java.nio.charset.Charset
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
@@ -30,6 +31,24 @@ import okio.Buffer
 import org.junit.Test
 
 class SourceEngineTest {
+    @Test fun detailHttpFlowCarriesPartialIdentityButLegacyBookKeepsOriginalScriptFailure() = withServer { server ->
+        val page = "<h1>另一部作品</h1><div id=author>叶子</div><div id=intro>简介</div>"
+        server.enqueue(html(page))
+        server.enqueue(html(page))
+        val rule = rule(server).copy(book = BookRuleDto(bookName = "h1", author = "#author",
+            intro = "#intro@js:r=missingFunction(r)"))
+        val engine = engine(QuickJsScriptExecutor())
+        val result = runBlocking { engine.bookDetails(rule, "source-1", hit(server), "book-7", allowCleartext = true) }
+
+        assertThat(result).isInstanceOf(SourceResult.Success::class.java)
+        val details = (result as SourceResult.Success).value
+        assertThat(details.identity).isEqualTo(BookIdentityEvidence("另一部作品", "叶子"))
+        assertThat(details.warning).isEqualTo(SourceFailure.UnsafeRule("script execution failed"))
+        val legacy = runBlocking { engine.book(rule, "source-1", hit(server), "book-7", allowCleartext = true) }
+        assertThat(legacy).isEqualTo(SourceResult.Failure(details.warning!!))
+        assertThat(server.requestCount).isEqualTo(2)
+    }
+
     @Test fun freshDetailsReturnPageIdentityWithoutBorrowingSearchAuthor() = withServer { server ->
         server.enqueue(html("<h1>页面书名</h1><div id=intro>页面简介</div>"))
         val result = runBlocking { engine().bookDetails(rule(server).copy(

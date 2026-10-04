@@ -221,6 +221,10 @@ class DefaultCatalogRepositoryTest {
             BookSource("book-1", "a", "https://example.org/a"),
             BookSource("book-1", "b", "https://example.org/b"),
         ))
+        override suspend fun detailsAreCurrent(expectedBook: Book, expectedSource: BookSource): Boolean =
+            book == expectedBook && expectedSource.bookId == expectedBook.bookId && mappings.value.any {
+                it.bookId == expectedBook.bookId && it.sourceId == expectedSource.sourceId && it.detailUrl == expectedSource.detailUrl
+            }
         override suspend fun saveDetails(expectedBook: Book, expectedSource: BookSource, details: BookDetails): Book? {
             if (book != expectedBook || mappings.value.none { it == expectedSource }) return null
             book = expectedBook.copy(coverUrl = details.book.coverUrl?.takeIf(String::isNotBlank) ?: expectedBook.coverUrl,

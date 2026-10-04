@@ -7,10 +7,66 @@ import com.novelradar.app.domain.model.SourceFailure
 import com.novelradar.app.domain.model.SourceResult
 import com.novelradar.app.source.rule.BookRuleDto
 import com.novelradar.app.source.script.ScriptExecutor
+import com.novelradar.app.source.script.QuickJsScriptExecutor
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 
 class BookPageParserTest {
+    private val realParser = BookPageParser(HtmlSelector(), QuickJsScriptExecutor())
+
+    @Test fun failingIntroScriptRetainsParsedIdentityAndLegacyFailure() = runBlocking {
+        val page = "<h1>另一部作品</h1><div id=author>叶子</div><div id=intro>简介</div>"
+        val rule = BookRuleDto(bookName = "h1", author = "#author", intro = "#intro@js:r=missingFunction(r)")
+        val result = realParser.parseDetails(page, hit.detailUrl, hit, "local-id-7", rule)
+
+        assertThat(result).isInstanceOf(SourceResult.Success::class.java)
+        val details = (result as SourceResult.Success).value
+        assertThat(details.identity).isEqualTo(BookIdentityEvidence("另一部作品", "叶子"))
+        assertThat(details.warning).isEqualTo(SourceFailure.UnsafeRule("script execution failed"))
+        assertThat(realParser.parse(page, hit.detailUrl, hit, "local-id-7", rule))
+            .isEqualTo(SourceResult.Failure(details.warning!!))
+    }
+
+    @Test fun requiredTitleFailureStillReadsActualConflictingAuthor() = runBlocking {
+        val page = "<div id=author>其他作者</div>"
+        val rule = BookRuleDto(bookName = "#absent", author = "#author")
+        val result = realParser.parseDetails(page, hit.detailUrl, hit, "local-id-7", rule)
+
+        assertThat(result).isInstanceOf(SourceResult.Success::class.java)
+        val details = (result as SourceResult.Success).value
+        assertThat(details.identity).isEqualTo(BookIdentityEvidence(author = "其他作者"))
+        assertThat(details.book.bookName).isEqualTo(hit.bookName)
+        assertThat(details.warning).isEqualTo(SourceFailure.Parse("book.bookName", "#absent"))
+        assertThat(realParser.parse(page, hit.detailUrl, hit, "local-id-7", rule))
+            .isEqualTo(SourceResult.Failure(details.warning!!))
+    }
+
+    @Test fun requiredAuthorFailureDoesNotDiscardActualTitle() = runBlocking {
+        val page = "<h1>另一部作品</h1>"
+        val rule = BookRuleDto(bookName = "h1", author = "#absent")
+        val result = realParser.parseDetails(page, hit.detailUrl, hit, "local-id-7", rule)
+
+        assertThat(result).isInstanceOf(SourceResult.Success::class.java)
+        val details = (result as SourceResult.Success).value
+        assertThat(details.identity).isEqualTo(BookIdentityEvidence(title = "另一部作品"))
+        assertThat(details.warning).isEqualTo(SourceFailure.Parse("book.author", "#absent"))
+        assertThat(realParser.parse(page, hit.detailUrl, hit, "local-id-7", rule))
+            .isEqualTo(SourceResult.Failure(details.warning!!))
+    }
+
+    @Test fun failedCoverSelectorRetainsIdentityButCannotReportSuccessfulLegacyBook() = runBlocking {
+        val page = "<h1>星河旅人</h1><div id=author>叶子</div>"
+        val rule = BookRuleDto(bookName = "h1", author = "#author", coverUrl = "[")
+        val result = realParser.parseDetails(page, hit.detailUrl, hit, "local-id-7", rule)
+
+        assertThat(result).isInstanceOf(SourceResult.Success::class.java)
+        val details = (result as SourceResult.Success).value
+        assertThat(details.identity).isEqualTo(BookIdentityEvidence("星河旅人", "叶子"))
+        assertThat(details.warning).isEqualTo(SourceFailure.Parse("book.coverUrl", "["))
+        assertThat(realParser.parse(page, hit.detailUrl, hit, "local-id-7", rule))
+            .isEqualTo(SourceResult.Failure(details.warning!!))
+    }
+
     private val html = javaClass.getResource("/html/book.html")!!.readText()
     private val hit = SearchHit(
         sourceId = "source-1", bookName = "星河旅人", author = "叶子",

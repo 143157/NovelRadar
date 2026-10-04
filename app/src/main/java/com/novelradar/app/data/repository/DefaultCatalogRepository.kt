@@ -70,22 +70,28 @@ class DefaultCatalogRepository(
         currentCoroutineContext().ensureActive()
         return when (fetched) {
             is SourceResult.Failure -> staleDetails(book, fetched.error)
-            is SourceResult.Success -> {
+            is SourceResult.Success -> try {
                 val details = fetched.value
-                if (details.book.bookId != bookId) {
+                val current = books.detailsAreCurrent(book, mapping)
+                currentCoroutineContext().ensureActive()
+                if (!current) {
+                    staleDetails(books.getBook(bookId), SourceFailure.Unexpected("Details changed during refresh"))
+                } else if (details.book.bookId != bookId) {
                     staleDetails(book, SourceFailure.Unexpected("Details belong to another local book"))
                 } else if (details.identity.conflictsWith(book)) {
                     DetailsResult(book, fromCache = true, identity = details.identity,
                         warning = SourceFailure.Parse("book.identity", ""), identityMismatch = true)
-                } else try {
+                } else if (details.warning != null) {
+                    DetailsResult(book, fromCache = true, identity = details.identity, warning = details.warning)
+                } else {
                     val saved = books.saveDetails(book, mapping, details)
                     if (saved == null) staleDetails(books.getBook(bookId), SourceFailure.Unexpected("Details changed during refresh"))
                     else DetailsResult(saved, fromCache = false, identity = details.identity)
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
-                    staleDetails(book, SourceFailure.Storage("Could not save details"))
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                staleDetails(book, SourceFailure.Storage("Could not verify or save details"))
             }
         }
     }

@@ -18,4 +18,5 @@ data class BookIdentityEvidence(val title: String? = null, val author: String? =
     private fun identityPart(value: String) = normalizeIdentityPart(value).lowercase(Locale.ROOT)
 }
 
-data class BookDetails(val book: Book, val identity: BookIdentityEvidence)
+/** A warning preserves partial identity evidence but makes the metadata unsuitable for saving. */
+data class BookDetails(val book: Book, val identity: BookIdentityEvidence, val warning: SourceFailure? = null)

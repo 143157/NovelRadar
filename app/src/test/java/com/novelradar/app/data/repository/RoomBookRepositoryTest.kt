@@ -11,6 +11,7 @@ import com.novelradar.app.domain.model.SearchHit
 import com.novelradar.app.domain.model.BookDetails
 import com.novelradar.app.domain.model.BookIdentityEvidence
 import com.novelradar.app.domain.model.SourceHealthStatus
+import com.novelradar.app.domain.model.SourceFailure
 import com.novelradar.app.domain.repository.ReadingLocation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +23,34 @@ import org.junit.Test
 class RoomBookRepositoryTest {
     private val dao = FakeBookDao()
     private val repository = RoomBookRepository(dao)
+
+    @Test fun currentDetailsCheckIsReadOnlyAndRejectsChangedBookMappingOrOwnership() = runTest {
+        val book = repository.saveSearchHit(hit("source-a"))
+        val source = repository.observeSources(book.bookId).first().single()
+        val location = ReadingLocation(book.bookId, "source-a", "chapter-1", 0, 5, 200L)
+        repository.addToShelf(book.bookId, 100L, "source-a")
+        repository.saveProgress(location)
+        val shelf = repository.observeShelf().first().single()
+
+        assertThat(repository.detailsAreCurrent(book, source)).isTrue()
+        assertThat(repository.detailsAreCurrent(book, source.copy(bookId = "foreign-book"))).isFalse()
+        assertThat(repository.detailsAreCurrent(book.copy(introduction = "旧快照"), source)).isFalse()
+        repository.saveSearchHit(hit("source-a").copy(detailUrl = "https://example.org/replacement"))
+        assertThat(repository.detailsAreCurrent(book, source)).isFalse()
+        assertThat(repository.getBook(book.bookId)).isEqualTo(book)
+        assertThat(repository.progress(book.bookId).first()).isEqualTo(location)
+        assertThat(repository.observeShelf().first().single()).isEqualTo(shelf)
+    }
+
+    @Test fun directDetailsSaveRejectsMetadataWhenPartialParsingFailed() = runTest {
+        val book = repository.saveSearchHit(hit("source-a"))
+        val source = repository.observeSources(book.bookId).first().single()
+        val result = repository.saveDetails(book, source, BookDetails(book.copy(introduction = "不应保存"),
+            BookIdentityEvidence(book.bookName, book.author), SourceFailure.Parse("book.coverUrl", "[")))
+
+        assertThat(result).isNull()
+        assertThat(repository.getBook(book.bookId)).isEqualTo(book)
+    }
 
     @Test fun detailsUpdateOnlyOptionalMetadataAndPreserveShelfProgressAndSources() = runTest {
         val book = repository.saveSearchHit(hit("source-a"))
@@ -215,7 +244,7 @@ class RoomBookRepositoryTest {
         detailUrl = "https://example.org/$sourceId",
     )
 
-    private class FakeBookDao : BookDao {
+    internal class FakeBookDao : BookDao {
         private val books = linkedMapOf<String, BookEntity>()
         private val sources = MutableStateFlow<List<BookSourceEntity>>(emptyList())
         private val shelf = MutableStateFlow<List<ShelfEntryEntity>>(emptyList())

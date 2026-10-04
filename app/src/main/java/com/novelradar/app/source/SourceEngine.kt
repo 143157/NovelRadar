@@ -110,7 +110,8 @@ class SourceEngine(
         bookId: String,
         allowCleartext: Boolean = false,
     ): SourceResult<Book> = when (val result = bookDetails(rule, sourceId, hit, bookId, allowCleartext)) {
-        is SourceResult.Success -> SourceResult.Success(result.value.book)
+        is SourceResult.Success -> result.value.warning?.let { SourceResult.Failure(it) }
+            ?: SourceResult.Success(result.value.book)
         is SourceResult.Failure -> result
     }
 

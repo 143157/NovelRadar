@@ -23,7 +23,8 @@ class BookPageParser(
         bookId: String,
         rule: BookRuleDto,
     ): SourceResult<Book> = when (val parsed = parseDetails(html, baseUrl, hit, bookId, rule)) {
-        is SourceResult.Success -> SourceResult.Success(parsed.value.book)
+        is SourceResult.Success -> parsed.value.warning?.let { SourceResult.Failure(it) }
+            ?: SourceResult.Success(parsed.value.book)
         is SourceResult.Failure -> parsed
     }
 
@@ -35,31 +36,25 @@ class BookPageParser(
         rule: BookRuleDto,
     ): SourceResult<BookDetails> {
         val document = Jsoup.parse(html, baseUrl)
-        val parsedName = when (val read = extractRuleText(
+        var warning: SourceFailure? = null
+        fun parsedValue(result: SourceResult<String?>): String? = when (result) {
+            is SourceResult.Success -> result.value
+            is SourceResult.Failure -> { if (warning == null) warning = result.error; null }
+        }
+        val parsedName = parsedValue(extractRuleText(
             document, rule.bookName, "book.bookName", selector, scripts,
             required = !rule.bookName.isNullOrBlank(),
-        )) {
-            is SourceResult.Success -> read.value
-            is SourceResult.Failure -> return read
-        }
-        val parsedAuthor = when (val read = extractRuleText(
+        ))
+        // The author remains independent evidence even if the title's rule failed.
+        val parsedAuthor = parsedValue(extractRuleText(
             document, rule.author, "book.author", selector, scripts,
             required = !rule.author.isNullOrBlank(),
-        )) {
-            is SourceResult.Success -> read.value
-            is SourceResult.Failure -> return read
-        }
+        ))
         val bookName = parsedName ?: hit.bookName
         val author = parsedAuthor ?: hit.author
-        if (bookName.isBlank()) return SourceResult.Failure(SourceFailure.Parse("book.bookName", rule.bookName.orEmpty()))
-        val intro = when (val read = extractRuleText(document, rule.intro, "book.intro", selector, scripts)) {
-            is SourceResult.Success -> read.value
-            is SourceResult.Failure -> return read
-        }
-        val coverUrl = when (val read = extractCoverUrl(document, baseUrl, rule.coverUrl)) {
-            is SourceResult.Success -> read.value
-            is SourceResult.Failure -> return read
-        }
+        if (bookName.isBlank() && warning == null) warning = SourceFailure.Parse("book.bookName", rule.bookName.orEmpty())
+        val intro = if (warning == null) parsedValue(extractRuleText(document, rule.intro, "book.intro", selector, scripts)) else null
+        val coverUrl = if (warning == null) parsedValue(extractCoverUrl(document, baseUrl, rule.coverUrl)) else null
         return SourceResult.Success(BookDetails(Book(
             bookId = bookId,
             normalizedBookKey = "${normalizeIdentityPart(bookName)}|${normalizeIdentityPart(author)}",
@@ -67,7 +62,7 @@ class BookPageParser(
             author = author,
             coverUrl = coverUrl,
             introduction = intro,
-        ), BookIdentityEvidence(parsedName, parsedAuthor)))
+        ), BookIdentityEvidence(parsedName, parsedAuthor), warning))
     }
 
     private suspend fun extractCoverUrl(
