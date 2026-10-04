@@ -27,7 +27,7 @@ If actual nonblank page identity conflicts with known canonical identity, reject
 - Test: `app/src/test/java/com/novelradar/app/feature/book/BookDetailViewModelTest.kt`
 - Test: `app/src/androidTest/java/com/novelradar/app/feature/book/BookDetailScreenTest.kt`
 
-- [ ] **Step 1: Write failing repository tests**
+- [x] **Step 1: Write failing repository tests**
 
 Test detail parsing, catalog caching, force refresh, source switching without overwriting another source's catalog, duplicate URL removal, and stale-cache fallback when refresh fails.
 
@@ -41,25 +41,25 @@ Test detail parsing, catalog caching, force refresh, source switching without ov
 }
 ```
 
-- [ ] **Step 2: Verify failure**
+- [x] **Step 2: Verify failure**
 
 Run: `.\gradlew.bat :app:testDebugUnitTest --tests "*.DefaultCatalogRepositoryTest"`
 
 Expected: FAIL.
 
-- [ ] **Step 3: Implement repository and transactions**
+- [x] **Step 3: Implement repository and transactions**
 
 `CatalogRepository` exposes `book(bookId)`, `sources(bookId)`, `catalog(bookId, sourceId, forceRefresh)`, and `refreshDetails`. Persist a complete catalog in one transaction only after parsing succeeds; keep previous snapshot on failure. Preserve the established `chapterId` representation: the first 20 bytes of SHA-256(resolved URL), encoded as 40 hexadecimal characters, not a new 20-character ID.
 
-- [ ] **Step 4: Write ViewModel tests and implement state**
+- [x] **Step 4: Write ViewModel tests and implement state**
 
 State contains book, sources, selected source ID, chapters, reversed flag, chapter query, loading, refreshing, and warning. Filter chapters locally by normalized title. Switching source cancels the previous load and reads that source's independent snapshot.
 
-- [ ] **Step 5: Implement the details UI**
+- [x] **Step 5: Implement the details UI**
 
 Render the orange hero, cover, metadata, source picker, `加入书架`, `开始阅读`, `整本下载`, chapter search, ascending/descending toggle, and lazy chapter list. Add test tags `book_primary_actions`, `source_picker`, and `chapter_list`.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run:
 
@@ -74,6 +74,8 @@ Expected: PASS/compile success.
 git add app/src/main/java/com/novelradar/app/domain/repository/CatalogRepository.kt app/src/main/java/com/novelradar/app/data/repository/DefaultCatalogRepository.kt app/src/main/java/com/novelradar/app/feature/book app/src/test app/src/androidTest
 git commit -m "feat: add book details and chapter catalog"
 ```
+
+Task 1 completion evidence (2026-10-05): the missing details work is committed in `a27420b` and `4076f64`; independent specification and code-quality reviews passed after fixing partial-evidence loss and stale-mapping identity publication. Root directly observed the initial RED reports (69 tests / 18 failures and 28 / 11), the review-fix RED (70 / 14), the isolated remaining three freshness failures after the partial-parser fix, and the extra stale-partial-match RED (1 / 1); all reported zero errors. The final real HTTP/QuickJS/parser/repository/ViewModel integration suite has nine cases. Independent full milestone verification exited successfully, and a forced unit rerun executed 26 tasks in 1m 40s, producing 392 tests across 41 suites with zero failures/errors. Lint has five existing warnings and zero errors; debug APK build and Android-test source compilation passed. Actual identity evidence remains ephemeral; partial warnings neither save metadata nor prove a verified match, and all identity publication is guarded by the current book/source URL snapshot. No schema, stored identity keys, chapter IDs or reader-history contracts changed. Android runtime/installation remains unverified; the current ADB device list is empty. The user-selected launcher icon is a separate focused task, not included in this completion evidence.
 
 ## Task 2: Add atomic chapter storage and cache policy
 
