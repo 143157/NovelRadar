@@ -30,7 +30,7 @@ The adaptive foreground uses an 18 dp inset on each side, with a full-color back
 - Modify: `app/src/main/AndroidManifest.xml` (icon attributes only)
 - Test: `app/src/test/java/com/novelradar/app/LauncherIconContractTest.kt`
 
-- [ ] **Step 1: Write and observe the failing resource-contract test**
+- [x] **Step 1: Write and observe the failing resource-contract test**
 
 Use the existing unit-test working-directory convention (`app`). The following test exercises the actual manifest, XML resources and supplied PNG rather than mocking resource ownership:
 
@@ -88,7 +88,7 @@ class LauncherIconContractTest {
 
 Run the focused test with the established offline/in-process Gradle flags. Before implementation, expect failure for missing manifest attributes/resources, not a Kotlin compilation error. Preserve the RED report.
 
-- [ ] **Step 2: Add the minimum resources and manifest attributes**
+- [x] **Step 2: Add the minimum resources and manifest attributes**
 
 Copy the canonical PNG into the exact new drawable path after confirming it does not already exist. Use `apply_patch` for the XML and manifest edits.
 
@@ -124,7 +124,7 @@ Both `mipmap-anydpi-v26` files:
 
 Add only `android:icon="@mipmap/ic_launcher"` and `android:roundIcon="@mipmap/ic_launcher_round"` to the existing application element. Preserve backup/network/service/permission configuration and all Kotlin application behavior.
 
-- [ ] **Step 3: Verify, self-review and commit explicit files**
+- [x] **Step 3: Verify, self-review and commit explicit files**
 
 Run:
 
@@ -145,3 +145,5 @@ git commit -m "feat: use selected book launcher icon"
 - [ ] **Step 4: Independent reviews and artifact handoff**
 
 After both reviews pass and root independently verifies the build/signature/hash, create a new stable test APK in `D:\NovelReader\build\deliverables` without overwriting the earlier `44d534b` package. Record the selected image hash and test-only/device-unverified status in `docs/test-apk-notes.md`. Mark this focused task complete only; the first-release and visual/accessibility plans remain incomplete.
+
+Verification checkpoint (2026-10-05): application commit `eace59b` contains exactly the nine authorized files. Root directly read the RED report (two assertions failed, zero errors), the focused GREEN report (two passed), and the actual resource/manifest changes. Independent full milestone verification passed; an additional forced unit rerun executed all 26 tasks in 50 seconds and produced 394 tests across 42 suites with zero failures/errors/skips. A subsequent full milestone verification also exited 0. Lint has zero errors and seven warnings: four pre-existing (`OldTargetApi`, `ModifierParameter`, `UseKtx`, `UseTomlInstead`) and three explicitly retained design warnings (`ObsoleteSdkInt` for the planned v26 resources and two `MonochromeLauncherIcon` warnings). No warning was suppressed and no new monochrome artwork was added. AAPT and an independent ZIP-stream hash check confirmed the compiled manifest/adaptive/inset references and the byte-for-byte original PNG inside the APK. APK v2 signature verification passed with the existing Debug certificate. Specification review passed; quality review and stable artifact handoff remain pending at this checkpoint. A fresh ADB check found no device, so launcher rendering, installation, and Android runtime are not verified.
