@@ -1,6 +1,7 @@
 package com.novelradar.app.domain.repository
 
 import com.novelradar.app.domain.model.Book
+import com.novelradar.app.domain.model.BookDetails
 import com.novelradar.app.domain.model.BookSource
 import com.novelradar.app.domain.model.SearchHit
 import kotlinx.coroutines.flow.Flow
@@ -29,6 +30,8 @@ data class ReadingLocation(
 interface BookRepository {
     suspend fun saveSearchHit(hit: SearchHit): Book
     suspend fun getBook(bookId: String): Book?
+    /** Returns the existing book with optional metadata enriched, or null if the snapshots are no longer current. */
+    suspend fun saveDetails(expectedBook: Book, expectedSource: BookSource, details: BookDetails): Book? = null
     fun observeSources(bookId: String): Flow<List<BookSource>>
     fun observeShelf(): Flow<List<ShelfBook>>
     suspend fun addToShelf(bookId: String, atEpochMillis: Long)

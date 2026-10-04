@@ -2,6 +2,7 @@ package com.novelradar.app.source
 
 import com.google.common.truth.Truth.assertThat
 import com.novelradar.app.domain.model.SearchHit
+import com.novelradar.app.domain.model.BookIdentityEvidence
 import com.novelradar.app.domain.model.SourceFailure
 import com.novelradar.app.domain.model.SourceResult
 import com.novelradar.app.source.http.SearchRequestFactory
@@ -29,6 +30,19 @@ import okio.Buffer
 import org.junit.Test
 
 class SourceEngineTest {
+    @Test fun freshDetailsReturnPageIdentityWithoutBorrowingSearchAuthor() = withServer { server ->
+        server.enqueue(html("<h1>页面书名</h1><div id=intro>页面简介</div>"))
+        val result = runBlocking { engine().bookDetails(rule(server).copy(
+            book = BookRuleDto(bookName = "h1", intro = "#intro")), "source-1", hit(server),
+            "book-7", allowCleartext = true) }
+
+        assertThat(result).isInstanceOf(SourceResult.Success::class.java)
+        val details = (result as SourceResult.Success).value
+        assertThat(details.identity).isEqualTo(BookIdentityEvidence(title = "页面书名"))
+        assertThat(details.book.introduction).isEqualTo("页面简介")
+        assertThat(details.book.bookId).isEqualTo("book-7")
+    }
+
     @Test fun searchRecognizesHtmlVerificationPageBeforeSelectorParsing() = withServer { server ->
         server.enqueue(html("<html><head><title>Just a moment...</title></head>" +
             "<body><div id='cf-challenge'>Checking your browser</div></body></html>"))

@@ -23,6 +23,7 @@ import com.novelradar.app.data.repository.RoomSourceRuleRepository
 import com.novelradar.app.domain.repository.BookRepository
 import com.novelradar.app.domain.repository.CatalogFetcher
 import com.novelradar.app.domain.repository.CatalogRepository
+import com.novelradar.app.domain.repository.DetailsFetcher
 import com.novelradar.app.domain.repository.ChapterRepository
 import com.novelradar.app.domain.repository.ReaderSettingsRepository
 import com.novelradar.app.domain.repository.ReadingProgressRepository
@@ -133,7 +134,9 @@ class AppContainer(
         books, sourceRules, RoomChapterCatalogStore(database.chapterDao()),
         CatalogFetcher { rule, stored, hit, bookId ->
             sourceEngine.toc(rule, stored.sourceId, hit, bookId, stored.allowCleartext)
-        }, ruleParser,
+        }, ruleParser, DetailsFetcher { rule, stored, hit, bookId ->
+            sourceEngine.bookDetails(rule, stored.sourceId, hit, bookId, stored.allowCleartext)
+        },
     )
     val refreshShelf = com.novelradar.app.domain.library.RefreshShelfUseCase(catalog)
 

@@ -25,6 +25,25 @@ interface BookDao {
         upsertSource(source)
     }
 
+    /** Compare the request snapshots and enrich only this existing book, in one transaction. */
+    @Transaction
+    suspend fun saveDetailsIfCurrent(
+        expectedBook: BookEntity,
+        expectedSource: BookSourceEntity,
+        coverUrl: String?,
+        introduction: String?,
+    ): BookEntity? {
+        if (expectedSource.bookId != expectedBook.bookId || getBook(expectedBook.bookId) != expectedBook) return null
+        val source = getSource(expectedBook.bookId, expectedSource.sourceId) ?: return null
+        if (source.detailUrl != expectedSource.detailUrl) return null
+        val updated = expectedBook.copy(
+            coverUrl = coverUrl?.takeIf(String::isNotBlank) ?: expectedBook.coverUrl,
+            introduction = introduction?.takeIf(String::isNotBlank) ?: expectedBook.introduction,
+        )
+        upsertBook(updated)
+        return updated
+    }
+
     @Query("SELECT * FROM books WHERE bookId = :bookId LIMIT 1")
     suspend fun getBook(bookId: String): BookEntity?
 

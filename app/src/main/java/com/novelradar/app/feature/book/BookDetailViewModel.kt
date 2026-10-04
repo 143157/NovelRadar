@@ -4,9 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.novelradar.app.domain.repository.BookRepository
 import com.novelradar.app.domain.model.Chapter
+import com.novelradar.app.domain.model.SourceFailure
 import com.novelradar.app.domain.repository.CatalogRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -26,6 +28,8 @@ class BookDetailViewModel(
         viewModelScope, SharingStarted.WhileSubscribed(5_000), BookDetailUiState(),
     )
     private var catalogJob: Job? = null
+    private var loadVersion = 0L
+    private val mismatchedSources = mutableSetOf<String>()
     // Source writes and shelf additions retain click order, even when storage is slow.
     private var sourceActionJob: Job? = null
     private var pendingSourceActions = 0
@@ -71,30 +75,72 @@ class BookDetailViewModel(
     private fun showSource(sourceId: String) {
         catalogJob?.cancel()
         mutableState.update { it.copy(selectedSourceId = sourceId, chapters = emptyList(), loading = true,
-            refreshing = false, warning = null, notice = null) }
+            refreshing = false, warning = null, detailsWarning = null, notice = null,
+            sourceIdentityMismatch = sourceId in mismatchedSources) }
         load(sourceId, force = false)
     }
 
     fun refresh() {
         val sourceId = mutableState.value.selectedSourceId ?: return
         catalogJob?.cancel()
-        mutableState.update { it.copy(refreshing = true, warning = null) }
+        mutableState.update { it.copy(refreshing = true, warning = null, detailsWarning = null) }
         load(sourceId, force = true)
     }
 
     private fun load(sourceId: String, force: Boolean) {
+        val version = ++loadVersion
+        mutableState.update { it.copy(detailsLoading = true) }
         catalogJob = viewModelScope.launch {
             try {
-                val result = catalog.catalog(bookId, sourceId, force)
-                if (mutableState.value.selectedSourceId == sourceId) mutableState.update {
-                    it.copy(chapters = result.chapters, loading = false, refreshing = false, warning = result.warning)
+                coroutineScope {
+                    launch { loadCatalog(sourceId, force, version) }
+                    launch { loadDetails(sourceId, version) }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
-                if (mutableState.value.selectedSourceId == sourceId) mutableState.update {
-                    it.copy(loading = false, refreshing = false, notice = "目录加载失败，请重试")
+            } finally {
+                if (isCurrent(sourceId, version)) mutableState.update { it.copy(refreshing = false) }
+            }
+        }
+    }
+
+    private fun isCurrent(sourceId: String, version: Long): Boolean =
+        loadVersion == version && mutableState.value.selectedSourceId == sourceId
+
+    private suspend fun loadCatalog(sourceId: String, force: Boolean, version: Long) {
+        try {
+            val result = catalog.catalog(bookId, sourceId, force)
+            if (isCurrent(sourceId, version)) mutableState.update {
+                it.copy(chapters = result.chapters, loading = false, warning = result.warning)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            if (isCurrent(sourceId, version)) mutableState.update {
+                it.copy(loading = false, notice = "目录加载失败，请重试")
+            }
+        }
+    }
+
+    private suspend fun loadDetails(sourceId: String, version: Long) {
+        try {
+            val result = catalog.refreshDetails(bookId, sourceId)
+            if (isCurrent(sourceId, version)) {
+                if (result.identityMismatch) mismatchedSources += sourceId
+                else if (result.warning == null && mutableState.value.book?.let {
+                    result.identity?.fullyMatches(it)
+                } == true) mismatchedSources -= sourceId
+                mutableState.update {
+                    it.copy(book = result.book?.takeIf { book -> book.bookId == bookId } ?: it.book,
+                        detailsLoading = false, detailsWarning = result.warning,
+                        sourceIdentityMismatch = sourceId in mismatchedSources)
                 }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            if (isCurrent(sourceId, version)) mutableState.update {
+                it.copy(detailsLoading = false, detailsWarning = SourceFailure.Unexpected("Could not load details"))
             }
         }
     }
@@ -104,7 +150,7 @@ class BookDetailViewModel(
 
     fun readingTarget(chapter: Chapter? = null): BookReadTarget? {
         val current = mutableState.value
-        if (current.sourceActionPending || current.loading || current.chapters.isEmpty()) return null
+        if (current.sourceActionPending || current.sourceIdentityMismatch || current.loading || current.chapters.isEmpty()) return null
         val sourceId = current.selectedSourceId ?: return null
         if (current.sources.none { it.bookId == bookId && it.sourceId == sourceId }) return null
         if (chapter == null) return BookReadTarget(sourceId, null)

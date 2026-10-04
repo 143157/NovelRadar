@@ -1,6 +1,8 @@
 package com.novelradar.app.source.parse
 
 import com.novelradar.app.domain.model.Book
+import com.novelradar.app.domain.model.BookDetails
+import com.novelradar.app.domain.model.BookIdentityEvidence
 import com.novelradar.app.domain.model.SearchHit
 import com.novelradar.app.domain.model.SourceFailure
 import com.novelradar.app.domain.model.SourceResult
@@ -20,22 +22,35 @@ class BookPageParser(
         hit: SearchHit,
         bookId: String,
         rule: BookRuleDto,
-    ): SourceResult<Book> {
+    ): SourceResult<Book> = when (val parsed = parseDetails(html, baseUrl, hit, bookId, rule)) {
+        is SourceResult.Success -> SourceResult.Success(parsed.value.book)
+        is SourceResult.Failure -> parsed
+    }
+
+    suspend fun parseDetails(
+        html: String,
+        baseUrl: String,
+        hit: SearchHit,
+        bookId: String,
+        rule: BookRuleDto,
+    ): SourceResult<BookDetails> {
         val document = Jsoup.parse(html, baseUrl)
-        val bookName = when (val read = extractRuleText(
+        val parsedName = when (val read = extractRuleText(
             document, rule.bookName, "book.bookName", selector, scripts,
             required = !rule.bookName.isNullOrBlank(),
         )) {
-            is SourceResult.Success -> read.value ?: hit.bookName
+            is SourceResult.Success -> read.value
             is SourceResult.Failure -> return read
         }
-        val author = when (val read = extractRuleText(
+        val parsedAuthor = when (val read = extractRuleText(
             document, rule.author, "book.author", selector, scripts,
             required = !rule.author.isNullOrBlank(),
         )) {
-            is SourceResult.Success -> read.value ?: hit.author
+            is SourceResult.Success -> read.value
             is SourceResult.Failure -> return read
         }
+        val bookName = parsedName ?: hit.bookName
+        val author = parsedAuthor ?: hit.author
         if (bookName.isBlank()) return SourceResult.Failure(SourceFailure.Parse("book.bookName", rule.bookName.orEmpty()))
         val intro = when (val read = extractRuleText(document, rule.intro, "book.intro", selector, scripts)) {
             is SourceResult.Success -> read.value
@@ -45,14 +60,14 @@ class BookPageParser(
             is SourceResult.Success -> read.value
             is SourceResult.Failure -> return read
         }
-        return SourceResult.Success(Book(
+        return SourceResult.Success(BookDetails(Book(
             bookId = bookId,
             normalizedBookKey = "${normalizeIdentityPart(bookName)}|${normalizeIdentityPart(author)}",
             bookName = bookName,
             author = author,
             coverUrl = coverUrl,
             introduction = intro,
-        ))
+        ), BookIdentityEvidence(parsedName, parsedAuthor)))
     }
 
     private suspend fun extractCoverUrl(

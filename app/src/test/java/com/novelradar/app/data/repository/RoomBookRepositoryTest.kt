@@ -8,6 +8,8 @@ import com.novelradar.app.data.db.entity.BookSourceEntity
 import com.novelradar.app.data.db.entity.ReadingProgressEntity
 import com.novelradar.app.data.db.entity.ShelfEntryEntity
 import com.novelradar.app.domain.model.SearchHit
+import com.novelradar.app.domain.model.BookDetails
+import com.novelradar.app.domain.model.BookIdentityEvidence
 import com.novelradar.app.domain.model.SourceHealthStatus
 import com.novelradar.app.domain.repository.ReadingLocation
 import kotlinx.coroutines.flow.Flow
@@ -20,6 +22,95 @@ import org.junit.Test
 class RoomBookRepositoryTest {
     private val dao = FakeBookDao()
     private val repository = RoomBookRepository(dao)
+
+    @Test fun detailsUpdateOnlyOptionalMetadataAndPreserveShelfProgressAndSources() = runTest {
+        val book = repository.saveSearchHit(hit("source-a"))
+        repository.saveSearchHit(hit("source-b"))
+        repository.addToShelf(book.bookId, 100L, "source-a")
+        val location = ReadingLocation(book.bookId, "source-a", "chapter-2", 1, 9, 200L)
+        repository.saveProgress(location)
+        val sources = repository.observeSources(book.bookId).first()
+        val shelf = repository.observeShelf().first().single()
+
+        val saved = repository.saveDetails(book, sources.first { it.sourceId == "source-a" },
+            BookDetails(book.copy(bookName = "测试 小说", author = "测试 作者",
+                normalizedBookKey = "untrusted-key", coverUrl = "https://example.org/new.jpg", introduction = "新简介"),
+                BookIdentityEvidence("测试 小说", "测试 作者")))
+
+        assertThat(saved).isEqualTo(book.copy(coverUrl = "https://example.org/new.jpg", introduction = "新简介"))
+        assertThat(repository.observeSources(book.bookId).first()).isEqualTo(sources)
+        assertThat(repository.progress(book.bookId).first()).isEqualTo(location)
+        assertThat(repository.observeShelf().first().single().copy(book = book)).isEqualTo(shelf)
+    }
+
+    @Test fun detailsDoNotOverwriteBookChangedSinceRequestBegan() = runTest {
+        val book = repository.saveSearchHit(hit("source-a"))
+        val source = repository.observeSources(book.bookId).first().single()
+        dao.upsertBook(BookEntity(book.bookId, book.normalizedBookKey, book.bookName, book.author, introduction = "较新的简介"))
+
+        val saved = repository.saveDetails(book, source,
+            BookDetails(book.copy(introduction = "过时简介"), BookIdentityEvidence()))
+
+        assertThat(saved).isNull()
+        assertThat(repository.getBook(book.bookId)?.introduction).isEqualTo("较新的简介")
+    }
+
+    @Test fun detailsDoNotOverwriteMappingChangedSinceRequestBegan() = runTest {
+        val book = repository.saveSearchHit(hit("source-a"))
+        val source = repository.observeSources(book.bookId).first().single()
+        repository.saveSearchHit(hit("source-a").copy(detailUrl = "https://example.org/replacement"))
+
+        val saved = repository.saveDetails(book, source,
+            BookDetails(book.copy(introduction = "过时简介"), BookIdentityEvidence()))
+
+        assertThat(saved).isNull()
+        assertThat(repository.getBook(book.bookId)).isEqualTo(book)
+        assertThat(repository.observeSources(book.bookId).first().single().detailUrl).isEqualTo("https://example.org/replacement")
+    }
+
+    @Test fun detailsRejectIdentityMismatchEvenThroughDirectRepositoryCall() = runTest {
+        val book = repository.saveSearchHit(hit("source-a"))
+        val source = repository.observeSources(book.bookId).first().single()
+
+        val saved = repository.saveDetails(book, source, BookDetails(book.copy(introduction = "错误简介"),
+            BookIdentityEvidence(book.bookName, "别的作者")))
+
+        assertThat(saved).isNull()
+        assertThat(repository.getBook(book.bookId)).isEqualTo(book)
+    }
+
+    @Test fun detailsWithUnknownCanonicalAuthorNeverChangeItsIdentity() = runTest {
+        val book = repository.saveSearchHit(hit("source-a").copy(author = ""))
+        val source = repository.observeSources(book.bookId).first().single()
+
+        val saved = repository.saveDetails(book, source, BookDetails(book.copy(author = "页面作者", introduction = "简介"),
+            BookIdentityEvidence(book.bookName, "页面作者")))
+
+        assertThat(saved?.author).isEmpty()
+        assertThat(saved?.normalizedBookKey).isEqualTo(book.normalizedBookKey)
+        assertThat(saved?.bookId).isEqualTo(book.bookId)
+        assertThat(saved?.introduction).isEqualTo("简介")
+    }
+
+    @Test fun detailsPreserveNonblankOptionalFieldsWhenPageOmitsThem() = runTest {
+        val book = repository.saveSearchHit(hit("source-a").copy(coverUrl = "https://example.org/old.jpg", introduction = "旧简介"))
+        val source = repository.observeSources(book.bookId).first().single()
+
+        val saved = repository.saveDetails(book, source,
+            BookDetails(book.copy(coverUrl = " ", introduction = null), BookIdentityEvidence()))
+
+        assertThat(saved).isEqualTo(book)
+    }
+
+    @Test fun detailsComparePageIdentityCaseInsensitivelyWithoutChangingStoredKey() = runTest {
+        val book = repository.saveSearchHit(hit("source-a").copy(bookName = "Star River", author = "Alice"))
+        val source = repository.observeSources(book.bookId).first().single()
+
+        val saved = repository.saveDetails(book, source,
+            BookDetails(book.copy(introduction = "新简介"), BookIdentityEvidence("STAR RIVER", "alice")))
+
+        assertThat(saved).isEqualTo(book.copy(introduction = "新简介"))
+    }
 
     @Test fun searchHitCreatesOneBookWithMultipleSourceMappings() = runTest {
         val first = repository.saveSearchHit(hit("source-a"))

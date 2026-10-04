@@ -2,6 +2,7 @@ package com.novelradar.app.feature.book
 
 import com.google.common.truth.Truth.assertThat
 import com.novelradar.app.domain.model.Book
+import com.novelradar.app.domain.model.BookIdentityEvidence
 import com.novelradar.app.domain.model.BookSource
 import com.novelradar.app.domain.model.Chapter
 import com.novelradar.app.domain.model.SearchHit
@@ -9,11 +10,14 @@ import com.novelradar.app.domain.model.SourceFailure
 import com.novelradar.app.domain.repository.BookRepository
 import com.novelradar.app.domain.repository.CatalogRepository
 import com.novelradar.app.domain.repository.CatalogResult
+import com.novelradar.app.domain.repository.DetailsResult
 import com.novelradar.app.domain.repository.ReadingLocation
 import com.novelradar.app.domain.repository.ShelfBook
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -31,6 +35,195 @@ import org.junit.runner.Description
 @OptIn(ExperimentalCoroutinesApi::class)
 class BookDetailViewModelTest {
     @get:Rule val main = MainDispatcherRule()
+
+    @Test fun confirmedWrongBookRetainsCatalogButRejectsReadingAndDownloadTarget() = runTest {
+        val catalog = FakeCatalog().apply { details = { _, book -> DetailsResult(book, true,
+            identity = BookIdentityEvidence(book.bookName, "其他作者"),
+            warning = SourceFailure.Parse("book.identity", ""), identityMismatch = true) } }
+        val vm = BookDetailViewModel("book-1", catalog, FakeBooks())
+        backgroundScope.launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.sourceIdentityMismatch).isTrue()
+        assertThat(vm.uiState.value.chapters).hasSize(2)
+        assertThat(vm.readingTarget()).isNull()
+        assertThat(vm.readingTarget(vm.uiState.value.chapters.first())).isNull()
+    }
+
+    @Test fun confirmedMismatchSurvivesUnknownFailureAndReselectionUntilFullPageMatch() = runTest {
+        val catalog = FakeCatalog().apply { details = { _, book -> DetailsResult(book, true, identityMismatch = true) } }
+        val vm = BookDetailViewModel("book-1", catalog, FakeBooks())
+        backgroundScope.launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+        catalog.details = { _, book -> DetailsResult(book, false, identity = BookIdentityEvidence(title = book.bookName)) }
+        vm.refresh()
+        advanceUntilIdle()
+        assertThat(vm.readingTarget()).isNull()
+        catalog.details = { _, book -> DetailsResult(book, true, warning = SourceFailure.Timeout) }
+        vm.refresh()
+        advanceUntilIdle()
+        assertThat(vm.readingTarget()).isNull()
+        vm.selectSource("b")
+        advanceUntilIdle()
+        assertThat(vm.readingTarget()).isEqualTo(BookReadTarget("b", null))
+        vm.selectSource("a")
+        advanceUntilIdle()
+        assertThat(vm.readingTarget()).isNull()
+        catalog.details = { _, book -> DetailsResult(book, false,
+            identity = BookIdentityEvidence("星 河旅人", "叶 子")) }
+        vm.refresh()
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.sourceIdentityMismatch).isFalse()
+        assertThat(vm.readingTarget()).isEqualTo(BookReadTarget("a", null))
+    }
+
+    @Test fun lateMismatchFromOldSourceCannotBlockSelectedSource() = runTest {
+        val release = CompletableDeferred<Unit>()
+        val started = CompletableDeferred<Unit>()
+        val catalog = FakeCatalog().apply { details = { source, book ->
+            if (source == "a") {
+                withContext(NonCancellable) { started.complete(Unit); release.await() }
+                DetailsResult(book, true, identityMismatch = true)
+            } else DetailsResult(book, false, identity = BookIdentityEvidence(book.bookName, book.author))
+        } }
+        val vm = BookDetailViewModel("book-1", catalog, FakeBooks())
+        backgroundScope.launch { vm.uiState.collect {} }
+        runCurrent()
+        vm.selectSource("b")
+        runCurrent()
+        release.complete(Unit)
+        advanceUntilIdle()
+
+        assertThat(started.isCompleted).isTrue()
+        assertThat(vm.uiState.value.sourceIdentityMismatch).isFalse()
+        assertThat(vm.readingTarget()).isEqualTo(BookReadTarget("b", null))
+    }
+
+    @Test fun lateMismatchFromOlderSameSourceRefreshCannotBlockNewMatch() = runTest {
+        val catalog = FakeCatalog()
+        val vm = BookDetailViewModel("book-1", catalog, FakeBooks())
+        backgroundScope.launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+        val release = CompletableDeferred<Unit>()
+        val started = CompletableDeferred<Unit>()
+        var requests = 0
+        catalog.details = { _, book ->
+            requests++
+            if (requests == 1) {
+                withContext(NonCancellable) { started.complete(Unit); release.await() }
+                DetailsResult(book, true, identityMismatch = true)
+            } else DetailsResult(book, false, identity = BookIdentityEvidence(book.bookName, book.author))
+        }
+        vm.refresh()
+        runCurrent()
+        vm.refresh()
+        runCurrent()
+        release.complete(Unit)
+        advanceUntilIdle()
+
+        assertThat(started.isCompleted).isTrue()
+        assertThat(vm.uiState.value.sourceIdentityMismatch).isFalse()
+        assertThat(vm.readingTarget()).isEqualTo(BookReadTarget("a", null))
+    }
+
+    @Test fun cachedCatalogIsReadableWhileRemoteDetailsAreStillPending() = runTest {
+        val release = CompletableDeferred<Unit>()
+        val catalog = FakeCatalog().apply { details = { _, book -> release.await(); DetailsResult(book, false) } }
+        val vm = BookDetailViewModel("book-1", catalog, FakeBooks())
+        backgroundScope.launch { vm.uiState.collect {} }
+        runCurrent()
+
+        assertThat(vm.uiState.value.detailsLoading).isTrue()
+        assertThat(vm.uiState.value.loading).isFalse()
+        assertThat(vm.readingTarget()).isEqualTo(BookReadTarget("a", null))
+        assertThat(vm.uiState.value.book?.introduction).isEqualTo("已保存简介")
+        release.complete(Unit)
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.detailsLoading).isFalse()
+    }
+
+    @Test fun explicitRefreshKeepsSuccessfulDetailsWhenCatalogFails() = runTest {
+        val catalog = FakeCatalog()
+        val vm = BookDetailViewModel("book-1", catalog, FakeBooks())
+        backgroundScope.launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+        catalog.failRefresh = true
+        catalog.details = { _, book -> DetailsResult(book.copy(introduction = "新简介"), false) }
+
+        vm.refresh()
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.book?.introduction).isEqualTo("新简介")
+        assertThat(vm.uiState.value.chapters).hasSize(2)
+        assertThat(vm.uiState.value.warning).isEqualTo(SourceFailure.Timeout)
+        assertThat(vm.uiState.value.detailsWarning).isNull()
+        assertThat(vm.uiState.value.refreshing).isFalse()
+    }
+
+    @Test fun explicitRefreshKeepsSuccessfulCatalogWhenDetailsFail() = runTest {
+        val catalog = FakeCatalog()
+        val vm = BookDetailViewModel("book-1", catalog, FakeBooks())
+        backgroundScope.launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+        catalog.refreshedTitle = "刷新目录章节"
+        catalog.details = { _, book -> DetailsResult(book, true, warning = SourceFailure.Timeout) }
+
+        vm.refresh()
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.book?.introduction).isEqualTo("已保存简介")
+        assertThat(vm.uiState.value.chapters.first().title).isEqualTo("刷新目录章节")
+        assertThat(vm.uiState.value.warning).isNull()
+        assertThat(vm.uiState.value.detailsWarning).isEqualTo(SourceFailure.Timeout)
+        assertThat(vm.readingTarget()).isEqualTo(BookReadTarget("a", null))
+    }
+
+    @Test fun lateOldSourceDetailsCannotOverwriteNewSourcePage() = runTest {
+        val release = CompletableDeferred<Unit>()
+        val started = CompletableDeferred<Unit>()
+        val catalog = FakeCatalog().apply { details = { source, book ->
+            if (source == "a") withContext(NonCancellable) { started.complete(Unit); release.await() }
+            DetailsResult(book.copy(introduction = "$source 简介"), false)
+        } }
+        val vm = BookDetailViewModel("book-1", catalog, FakeBooks())
+        backgroundScope.launch { vm.uiState.collect {} }
+        runCurrent()
+        assertThat(started.isCompleted).isTrue()
+        vm.selectSource("b")
+        runCurrent()
+        assertThat(vm.uiState.value.book?.introduction).isEqualTo("b 简介")
+        release.complete(Unit)
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.selectedSourceId).isEqualTo("b")
+        assertThat(vm.uiState.value.book?.introduction).isEqualTo("b 简介")
+        assertThat(vm.uiState.value.chapters.single().sourceId).isEqualTo("b")
+    }
+
+    @Test fun lateOlderRefreshOfSameSourceCannotOverwriteNewerDetails() = runTest {
+        val catalog = FakeCatalog()
+        val vm = BookDetailViewModel("book-1", catalog, FakeBooks())
+        backgroundScope.launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+        val release = CompletableDeferred<Unit>()
+        var requests = 0
+        catalog.details = { _, book ->
+            requests++
+            val current = requests
+            if (current == 1) withContext(NonCancellable) { release.await() }
+            DetailsResult(book.copy(introduction = "第$current 次简介"), false)
+        }
+        vm.refresh()
+        runCurrent()
+        vm.refresh()
+        runCurrent()
+        release.complete(Unit)
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.book?.introduction).isEqualTo("第2 次简介")
+        assertThat(vm.uiState.value.refreshing).isFalse()
+    }
 
     @Test fun loadsFirstSourceThenSwitchesAndFiltersIndependentCatalog() = runTest {
         val catalog = FakeCatalog()
@@ -188,7 +381,10 @@ class BookDetailViewModelTest {
 
     private class FakeCatalog : CatalogRepository {
         var failRefresh = false
-        override suspend fun book(bookId: String) = Book("book-1", "星河旅人|叶子", "星河旅人", "叶子")
+        var refreshedTitle: String? = null
+        var details: suspend (String, Book) -> DetailsResult = { _, book -> DetailsResult(book, true) }
+        override suspend fun book(bookId: String) = Book("book-1", "星河旅人|叶子", "星河旅人", "叶子", introduction = "已保存简介")
+        override suspend fun refreshDetails(bookId: String, sourceId: String) = details(sourceId, book(bookId))
         override suspend fun sourceNames() = mapOf("a" to "书源甲", "b" to "书源乙")
         override fun sources(bookId: String): Flow<List<BookSource>> = MutableStateFlow(listOf(
             BookSource("book-1", "a", "https://example.org/a"),
@@ -197,7 +393,7 @@ class BookDetailViewModelTest {
         override fun observeChapters(bookId: String, sourceId: String): Flow<List<Chapter>> = MutableStateFlow(emptyList())
         override suspend fun catalog(bookId: String, sourceId: String, forceRefresh: Boolean): CatalogResult {
             val chapters = if (sourceId == "a") listOf(
-                Chapter(bookId, sourceId, "1", 0, "第一章", "https://example.org/1"),
+                Chapter(bookId, sourceId, "1", 0, if (forceRefresh) refreshedTitle ?: "第一章" else "第一章", "https://example.org/1"),
                 Chapter(bookId, sourceId, "2", 1, "第二章", "https://example.org/2"),
             ) else listOf(Chapter(bookId, sourceId, "3", 0, "番外", "https://example.org/3"))
             return CatalogResult(chapters, fromCache = failRefresh,

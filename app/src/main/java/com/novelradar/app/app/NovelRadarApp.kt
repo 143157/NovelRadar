@@ -290,7 +290,7 @@ private fun BookDetailRoute(bookId: String, container: AppContainer, downloads: 
         canDownload = !downloadState.startBusy && downloadState.startRequest == null,
         onDownload = { model.readingTarget()?.let { downloads.requestStart(bookId, it.sourceId) } },
         onChapterSelected = { chapter -> model.readingTarget(chapter)?.let { onRead(it.sourceId, it.chapterId) } },
-        modifier = modifier)
+        modifier = modifier, coverFetcher = container.coverFetcher)
     downloadState.startRequest?.takeIf { it.bookId == bookId }?.let { request ->
         DownloadStartDialog(request, downloads::chooseStartNetwork, onConfirm = {
             val liveTarget = model.readingTarget()

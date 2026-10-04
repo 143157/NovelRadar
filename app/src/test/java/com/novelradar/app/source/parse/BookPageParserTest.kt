@@ -2,6 +2,7 @@ package com.novelradar.app.source.parse
 
 import com.google.common.truth.Truth.assertThat
 import com.novelradar.app.domain.model.SearchHit
+import com.novelradar.app.domain.model.BookIdentityEvidence
 import com.novelradar.app.domain.model.SourceFailure
 import com.novelradar.app.domain.model.SourceResult
 import com.novelradar.app.source.rule.BookRuleDto
@@ -53,5 +54,34 @@ class BookPageParserTest {
         val result = parser.parse(html, hit.detailUrl, hit, "local-id-7", BookRuleDto(bookName = ".absent"))
 
         assertThat(result).isEqualTo(SourceResult.Failure(SourceFailure.Parse("book.bookName", ".absent")))
+    }
+
+    @Test fun detailsExposeOnlyIdentityActuallyParsedFromThePage() = runBlocking {
+        val result = parser.parseDetails(html, hit.detailUrl, hit, "local-id-7",
+            BookRuleDto(bookName = "meta[property=og:title]@js:r=r.replace('·修订版', '')", author = ".author"))
+
+        assertThat(result).isInstanceOf(SourceResult.Success::class.java)
+        val details = (result as SourceResult.Success).value
+        assertThat(details.identity).isEqualTo(BookIdentityEvidence("星河旅人", "叶子"))
+        assertThat(details.book.bookId).isEqualTo("local-id-7")
+    }
+
+    @Test fun borrowedSearchFieldsRemainUnknownIdentityEvidence() = runBlocking {
+        val result = parser.parseDetails(html, hit.detailUrl, hit, "local-id-7", BookRuleDto())
+
+        assertThat(result).isInstanceOf(SourceResult.Success::class.java)
+        val details = (result as SourceResult.Success).value
+        assertThat(details.book.bookName).isEqualTo(hit.bookName)
+        assertThat(details.book.author).isEqualTo(hit.author)
+        assertThat(details.identity).isEqualTo(BookIdentityEvidence())
+    }
+
+    @Test fun parsedTitleDoesNotConfirmBorrowedAuthor() = runBlocking {
+        val result = parser.parseDetails(html, hit.detailUrl, hit, "local-id-7",
+            BookRuleDto(bookName = "meta[property=og:title]@js:r=r.replace('·修订版', '')"))
+
+        assertThat(result).isInstanceOf(SourceResult.Success::class.java)
+        assertThat((result as SourceResult.Success).value.identity)
+            .isEqualTo(BookIdentityEvidence(title = "星河旅人"))
     }
 }

@@ -1,11 +1,14 @@
 package com.novelradar.app.data.repository
 
 import com.novelradar.app.domain.model.Chapter
+import com.novelradar.app.domain.model.Book
 import com.novelradar.app.domain.model.SearchHit
 import com.novelradar.app.domain.model.SourceFailure
 import com.novelradar.app.domain.model.SourceResult
 import com.novelradar.app.domain.repository.BookRepository
 import com.novelradar.app.domain.repository.CatalogFetcher
+import com.novelradar.app.domain.repository.DetailsFetcher
+import com.novelradar.app.domain.repository.DetailsResult
 import com.novelradar.app.domain.repository.CatalogRepository
 import com.novelradar.app.domain.repository.CatalogResult
 import com.novelradar.app.domain.repository.ChapterCatalogStore
@@ -15,6 +18,8 @@ import com.novelradar.app.source.rule.RuleJsonParser
 import com.novelradar.app.source.rule.RuleParseResult
 import java.security.MessageDigest
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 
@@ -25,6 +30,7 @@ class DefaultCatalogRepository(
     private val store: ChapterCatalogStore,
     private val fetcher: CatalogFetcher,
     private val parser: RuleJsonParser = RuleJsonParser(),
+    private val detailsFetcher: DetailsFetcher? = null,
 ) : CatalogRepository {
     override suspend fun book(bookId: String) = books.getBook(bookId)
     override suspend fun sourceNames(): Map<String, String> = rules.observeAll().first().associate { stored ->
@@ -33,6 +39,56 @@ class DefaultCatalogRepository(
     }
     override fun sources(bookId: String) = books.observeSources(bookId)
     override fun observeChapters(bookId: String, sourceId: String): Flow<List<Chapter>> = store.observe(bookId, sourceId)
+
+    override suspend fun refreshDetails(bookId: String, sourceId: String): DetailsResult {
+        val book = books.getBook(bookId)
+            ?: return staleDetails(null, SourceFailure.UnsafeRule("Book is not saved"))
+        val mapping = books.observeSources(bookId).first().firstOrNull { it.bookId == bookId && it.sourceId == sourceId }
+            ?: return staleDetails(book, SourceFailure.UnsafeRule("Book has no matching source"))
+        val source = rules.observeAll().first().firstOrNull { it.sourceId == sourceId }
+            ?: return staleDetails(book, SourceFailure.UnsafeRule("Source rule is missing"))
+        val rule = try {
+            val parsed = parser.parse(source.rawJson) as? RuleParseResult.Success
+            source.asExecutableRule(parsed?.rules?.singleOrNull()
+                ?: throw IllegalArgumentException("Invalid stored source rule"))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return staleDetails(book, SourceFailure.UnsafeRule("Source rule is unavailable"))
+        }
+        val hit = SearchHit(sourceId, book.bookName, book.author, mapping.detailUrl,
+            coverUrl = book.coverUrl, introduction = book.introduction)
+        val fetched = try {
+            detailsFetcher?.fetch(rule, source, hit, bookId)
+                ?: SourceResult.Failure(SourceFailure.Unexpected("Details are unavailable"))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            SourceResult.Failure(SourceFailure.Unexpected("Could not load details"))
+        }
+        // An uncooperative fetcher must not write after its caller has switched source or refreshed again.
+        currentCoroutineContext().ensureActive()
+        return when (fetched) {
+            is SourceResult.Failure -> staleDetails(book, fetched.error)
+            is SourceResult.Success -> {
+                val details = fetched.value
+                if (details.book.bookId != bookId) {
+                    staleDetails(book, SourceFailure.Unexpected("Details belong to another local book"))
+                } else if (details.identity.conflictsWith(book)) {
+                    DetailsResult(book, fromCache = true, identity = details.identity,
+                        warning = SourceFailure.Parse("book.identity", ""), identityMismatch = true)
+                } else try {
+                    val saved = books.saveDetails(book, mapping, details)
+                    if (saved == null) staleDetails(books.getBook(bookId), SourceFailure.Unexpected("Details changed during refresh"))
+                    else DetailsResult(saved, fromCache = false, identity = details.identity)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    staleDetails(book, SourceFailure.Storage("Could not save details"))
+                }
+            }
+        }
+    }
 
     override suspend fun catalog(bookId: String, sourceId: String, forceRefresh: Boolean): CatalogResult {
         val cached = store.observe(bookId, sourceId).first()
@@ -87,4 +143,7 @@ class DefaultCatalogRepository(
 
     private fun stale(chapters: List<Chapter>, warning: SourceFailure) =
         CatalogResult(chapters, fromCache = chapters.isNotEmpty(), warning = warning)
+
+    private fun staleDetails(book: Book?, warning: SourceFailure) =
+        DetailsResult(book, fromCache = book != null, warning = warning)
 }

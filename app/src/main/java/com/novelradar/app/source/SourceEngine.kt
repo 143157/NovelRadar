@@ -3,6 +3,7 @@ package com.novelradar.app.source
 import com.google.re2j.Pattern
 import com.google.re2j.PatternSyntaxException
 import com.novelradar.app.domain.model.Book
+import com.novelradar.app.domain.model.BookDetails
 import com.novelradar.app.domain.model.Chapter
 import com.novelradar.app.domain.model.SearchHit
 import com.novelradar.app.domain.model.SourceFailure
@@ -108,7 +109,18 @@ class SourceEngine(
         hit: SearchHit,
         bookId: String,
         allowCleartext: Boolean = false,
-    ): SourceResult<Book> {
+    ): SourceResult<Book> = when (val result = bookDetails(rule, sourceId, hit, bookId, allowCleartext)) {
+        is SourceResult.Success -> SourceResult.Success(result.value.book)
+        is SourceResult.Failure -> result
+    }
+
+    suspend fun bookDetails(
+        rule: RuleDto,
+        sourceId: String,
+        hit: SearchHit,
+        bookId: String,
+        allowCleartext: Boolean = false,
+    ): SourceResult<BookDetails> {
         validateBookRequest(rule, sourceId, hit, bookId)?.let { return it }
         val page = when (val fetched = getPage(sourceId, hit.detailUrl, allowCleartext)) {
             is SourceResult.Success -> fetched.value
@@ -118,7 +130,7 @@ class SourceEngine(
             is SourceResult.Success -> decoded.value
             is SourceResult.Failure -> return decoded
         }
-        return bookParser.parse(html, page.finalUrl, hit, bookId, rule.book ?: BookRuleDto())
+        return bookParser.parseDetails(html, page.finalUrl, hit, bookId, rule.book ?: BookRuleDto())
     }
 
     suspend fun toc(
