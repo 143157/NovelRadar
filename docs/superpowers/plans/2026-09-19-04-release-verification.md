@@ -106,6 +106,8 @@ git commit -m "security: enforce source and script boundaries"
 
 ## Task 3: Finish visual polish and accessibility
 
+User-selected icon reconciliation (2026-10-04): use the exact supplied purple/cream book image saved at `docs/assets/user-app-icon.png`. Implement and review the focused launcher-resource task in `docs/superpowers/plans/2026-10-04-selected-app-icon.md` after the current detail review closes. This can run before the remaining reader tasks because the user explicitly selected the icon; it does not replace the orange/black in-app design or imply that this entire visual/accessibility task is complete.
+
 **Files:**
 - Modify: `app/src/main/java/com/novelradar/app/ui/theme/Color.kt`
 - Modify: `app/src/main/java/com/novelradar/app/ui/theme/Theme.kt`
