@@ -406,7 +406,7 @@ git commit -m "feat: offer safe source fallback while reading"
 
 ## Task 9: Close the reader/download milestone
 
-Scope reconciliation (2026-10-02, updated 2026-10-04): before closing this milestone, finish Task 1's detail refresh, cover, and introduction rendering. Also cover the approved design's cumulative cache limit (design sections 5.4 and 6.6); limiting each prefetch to two chapters alone does not bound total cached storage. The persistent new-task download-network default is now implemented and reviewed in Task 7. Cache eviction must never delete `DOWNLOADED` chapters or reading history, and must coordinate with chapter writes. Preserve the already-persisted chapter IDs when finishing detail work. Detail completion and the cumulative cache limit remain requirements, not implemented features.
+Scope reconciliation (2026-10-02, updated 2026-10-05): Task 1's detail refresh, cover, and introduction are now implemented and independently reviewed; their completion evidence appears above. Before closing this milestone, cover the approved design's cumulative cache limit (design sections 5.4 and 6.6); limiting each prefetch to two chapters alone does not bound total cached storage. The persistent new-task download-network default is implemented and reviewed in Task 7. Cache eviction must never delete `DOWNLOADED` chapters or reading history, and must coordinate with chapter writes. Already-persisted chapter IDs remain unchanged. The cumulative cache limit and this task's offline/end-to-end coverage are still pending.
 
 **Files:**
 - Create: `app/src/test/java/com/novelradar/app/OfflineReadingIntegrationTest.kt`
