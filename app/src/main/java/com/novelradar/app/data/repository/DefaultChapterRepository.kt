@@ -13,6 +13,7 @@ import com.novelradar.app.domain.repository.ChapterOrigin
 import com.novelradar.app.domain.repository.ChapterRepository
 import com.novelradar.app.domain.repository.LoadedChapter
 import com.novelradar.app.source.parse.ChapterPage
+import com.novelradar.app.source.parse.ChapterRequestContext
 import com.novelradar.app.source.rule.RuleDto
 import com.novelradar.app.source.rule.RuleJsonParser
 import com.novelradar.app.source.rule.RuleParseResult
@@ -29,13 +30,14 @@ fun interface ChapterContentFetcher {
 }
 
 fun interface ChapterPageFetcher {
-    suspend fun fetch(rule: RuleDto, sourceId: String, url: String, allowCleartext: Boolean): SourceResult<ChapterPage>
+    suspend fun fetch(rule: RuleDto, sourceId: String, url: String, allowCleartext: Boolean, context: ChapterRequestContext): SourceResult<ChapterPage>
 }
 
 class RuleBasedChapterContentFetcher(
     private val rules: SourceRuleRepository,
     private val pages: ChapterPageFetcher,
     private val parser: RuleJsonParser = RuleJsonParser(),
+    private val chapterUrls: suspend (String, String) -> List<String> = { _, _ -> emptyList() },
 ) : ChapterContentFetcher {
     override suspend fun fetch(chapter: ChapterEntity): SourceResult<String> {
         val url = chapter.url?.takeIf(String::isNotBlank)
@@ -51,7 +53,14 @@ class RuleBasedChapterContentFetcher(
         } catch (_: Exception) {
             return SourceResult.Failure(SourceFailure.UnsafeRule("Source rule is unavailable"))
         }
-        return when (val page = pages.fetch(rule, chapter.sourceId, url, saved.allowCleartext)) {
+        val context = try {
+            ChapterRequestContext(chapterUrls(chapter.bookId, chapter.sourceId).toSet())
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return SourceResult.Failure(SourceFailure.UnsafeRule("Chapter catalog is unavailable"))
+        }
+        return when (val page = pages.fetch(rule, chapter.sourceId, url, saved.allowCleartext, context)) {
             is SourceResult.Success -> SourceResult.Success(page.value.content)
             is SourceResult.Failure -> page
         }

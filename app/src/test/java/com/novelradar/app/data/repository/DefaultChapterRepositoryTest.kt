@@ -11,19 +11,36 @@ import com.novelradar.app.domain.model.StoredSourceRule
 import com.novelradar.app.domain.repository.ChapterOrigin
 import com.novelradar.app.domain.repository.ImportSummary
 import com.novelradar.app.domain.repository.SourceRuleRepository
+import com.novelradar.app.source.SourceEngine
+import com.novelradar.app.source.http.SearchRequestFactory
+import com.novelradar.app.source.http.SourceHttpClient
+import com.novelradar.app.source.parse.BookPageParser
 import com.novelradar.app.source.parse.ChapterPage
+import com.novelradar.app.source.parse.ChapterPageParser
+import com.novelradar.app.source.parse.ChapterRequestContext
+import com.novelradar.app.source.parse.HtmlSelector
+import com.novelradar.app.source.parse.SearchPageParser
+import com.novelradar.app.source.parse.TocPageParser
 import com.novelradar.app.source.rule.RuleDto
+import com.novelradar.app.source.script.ScriptExecutor
 import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import org.junit.Assert.assertThrows
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 
 class DefaultChapterRepositoryTest {
     @get:Rule val temporary = TemporaryFolder()
@@ -364,12 +381,13 @@ class DefaultChapterRepositoryTest {
     @Test fun ruleBasedFetcherUsesSavedCleartextChoiceAndParsedChapter() = runBlocking {
         val rules = FakeRules(StoredSourceRule("source", RULE_JSON, allowCleartext = true))
         var called = false
-        val fetcher = RuleBasedChapterContentFetcher(rules, { rule, sourceId, url, allowCleartext ->
+        val fetcher = RuleBasedChapterContentFetcher(rules, { rule, sourceId, url, allowCleartext, context ->
             called = true
             assertThat(rule.name).isEqualTo("Source")
             assertThat(sourceId).isEqualTo("source")
             assertThat(url).isEqualTo("https://example.test/one")
             assertThat(allowCleartext).isTrue()
+            assertThat(context).isEqualTo(ChapterRequestContext())
             SourceResult.Success(ChapterPage("Chapter", "正文"))
         })
 
@@ -380,13 +398,118 @@ class DefaultChapterRepositoryTest {
     @Test fun ruleBasedFetcherRejectsDisabledSourceBeforeNetwork() = runBlocking {
         val rules = FakeRules(StoredSourceRule("source", RULE_JSON, enabled = false))
         var called = false
-        val fetcher = RuleBasedChapterContentFetcher(rules, { _, _, _, _ ->
+        val fetcher = RuleBasedChapterContentFetcher(rules, { _, _, _, _, _ ->
             called = true
             SourceResult.Success(ChapterPage("", "unexpected"))
         })
 
         assertThat(fetcher.fetch(chapter("one", 0))).isInstanceOf(SourceResult.Failure::class.java)
         assertThat(called).isFalse()
+    }
+
+    @Test fun ruleBasedFetcherPassesTheCurrentBookAndSourceCatalog() = runBlocking {
+        val rules = FakeRules(StoredSourceRule("source", RULE_JSON))
+        val dao = FakeChapterDao(chapter("one", 0), chapter("two", 1),
+            chapter("other-book", 0).copy(bookId = "other-book"),
+            chapter("other-source", 0).copy(sourceId = "other-source"))
+        val fetcher = RuleBasedChapterContentFetcher(rules, { _, _, _, _, context ->
+            assertThat(context.knownChapterUrls).containsExactly("https://example.test/one", "https://example.test/two")
+            SourceResult.Success(ChapterPage("第一章", "正文"))
+        }, chapterUrls = { bookId, sourceId -> dao.getChapters(bookId, sourceId).mapNotNull { it.url } })
+
+        assertThat(fetcher.fetch(chapter("one", 0))).isEqualTo(SourceResult.Success("正文"))
+    }
+
+    @Test fun ruleBasedFetcherCatalogFailureStopsBeforeNetwork() = runBlocking {
+        var called = false
+        val fetcher = RuleBasedChapterContentFetcher(FakeRules(StoredSourceRule("source", RULE_JSON)),
+            { _, _, _, _, _ -> called = true; SourceResult.Success(ChapterPage("第一章", "unexpected")) },
+            chapterUrls = { _, _ -> throw java.io.IOException("database unavailable") })
+
+        assertThat(fetcher.fetch(chapter("one", 0))).isEqualTo(
+            SourceResult.Failure(SourceFailure.UnsafeRule("Chapter catalog is unavailable")))
+        assertThat(called).isFalse()
+    }
+
+    @Test fun ruleBasedFetcherCatalogCancellationIsRethrownBeforeNetwork() {
+        var called = false
+        val fetcher = RuleBasedChapterContentFetcher(FakeRules(StoredSourceRule("source", RULE_JSON)),
+            { _, _, _, _, _ -> called = true; SourceResult.Success(ChapterPage("第一章", "unexpected")) },
+            chapterUrls = { _, _ -> throw CancellationException("catalog cancelled") })
+
+        val cancelled = assertThrows(CancellationException::class.java) {
+            runBlocking { fetcher.fetch(chapter("one", 0)) }
+        }
+        assertThat(cancelled.message).isEqualTo("catalog cancelled")
+        assertThat(called).isFalse()
+    }
+
+    @Test fun ruleBasedFetcherPageCancellationIsRethrown() {
+        val fetcher = RuleBasedChapterContentFetcher(FakeRules(StoredSourceRule("source", RULE_JSON)),
+            { _, _, _, _, _ -> throw CancellationException("page cancelled") })
+
+        val cancelled = assertThrows(CancellationException::class.java) {
+            runBlocking { fetcher.fetch(chapter("one", 0)) }
+        }
+        assertThat(cancelled.message).isEqualTo("page cancelled")
+    }
+
+    @Test fun ruleBasedFetcherRejectsStoredRuleSourceMismatchBeforeNetwork() = runBlocking {
+        val rules = FakeRules(StoredSourceRule("source", RULE_JSON.replace("\"id\":\"source\"", "\"id\":\"other\"")))
+        var called = false
+        val fetcher = RuleBasedChapterContentFetcher(rules, { _, _, _, _, _ ->
+            called = true
+            SourceResult.Success(ChapterPage("第一章", "unexpected"))
+        })
+
+        assertThat(fetcher.fetch(chapter("one", 0))).isInstanceOf(SourceResult.Failure::class.java)
+        assertThat(called).isFalse()
+    }
+
+    @Test fun fetcherHttpFlowUsesCurrentScopedCatalogAndRetainsRealContinuationPages() {
+        MockWebServer().use { server ->
+            server.start()
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    val body = when (request.requestUrl!!.encodedPath) {
+                        "/chapter/1" -> "<h1>第一章</h1><div id=content>首段</div><a class=next href='/chapter/1-page2'>下一页</a>"
+                        "/chapter/1-page2" -> "<h1>第一章 (2/2)</h1><div id=content>尾段</div><a class=next href='/chapter/2'>下一页</a>"
+                        "/chapter/2" -> "<h1>第一章</h1><div id=content>另一章正文</div>"
+                        else -> return MockResponse().setResponseCode(404)
+                    }
+                    return MockResponse().addHeader("Content-Type", "text/html; charset=utf-8").setBody(body)
+                }
+            }
+            val first = chapter("one", 0).copy(url = server.url("/chapter/1").toString())
+            val continuation = server.url("/chapter/1-page2").toString()
+            val dao = FakeChapterDao(first,
+                chapter("other-book", 0).copy(bookId = "other-book", url = continuation),
+                chapter("other-source", 0).copy(sourceId = "other-source", url = continuation))
+            val raw = RULE_JSON.replace("https://example.test", server.url("/").toString().trimEnd('/'))
+                .replace("\"content\":\"#content\"", "\"content\":\"#content\",\"pagination\":true,\"nextPage\":\"a.next\"")
+            val engine = realSourceEngine()
+            val fetcher = RuleBasedChapterContentFetcher(FakeRules(StoredSourceRule("source", raw, allowCleartext = true)),
+                ChapterPageFetcher { rule, sourceId, url, allowed, context -> engine.chapter(rule, sourceId, url, allowed, context) },
+                chapterUrls = { bookId, sourceId -> dao.getChapters(bookId, sourceId).mapNotNull { it.url } })
+
+            val result = runBlocking { withTimeout(10_000) {
+                dao.upsert(chapter("two", 1).copy(url = server.url("/chapter/2").toString()))
+                fetcher.fetch(first)
+            } }
+
+            assertThat(result).isEqualTo(SourceResult.Success("首段\n\n尾段"))
+            assertThat(server.requestCount).isEqualTo(2)
+        }
+    }
+
+    private fun realSourceEngine(): SourceEngine {
+        val selector = HtmlSelector()
+        val scripts = object : ScriptExecutor {
+            override suspend fun transform(input: String, script: String): SourceResult<String> = SourceResult.Success(input)
+        }
+        return SourceEngine(SearchRequestFactory(), SourceHttpClient(), SearchPageParser(selector, scripts),
+            BookPageParser(selector, scripts), TocPageParser(selector, scripts), ChapterPageParser(selector, scripts),
+            selector, scripts)
     }
 
     private fun chapter(id: String, index: Int) = ChapterEntity(

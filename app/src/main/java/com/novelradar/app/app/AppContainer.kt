@@ -108,9 +108,11 @@ class AppContainer(
         chapters = database.chapterDao(),
         files = chapterFiles,
         fetcher = RuleBasedChapterContentFetcher(sourceRules,
-            ChapterPageFetcher { rule, sourceId, url, allowCleartext ->
-                sourceEngine.chapter(rule, sourceId, url, allowCleartext)
-            }, ruleParser),
+            ChapterPageFetcher { rule, sourceId, url, allowCleartext, context ->
+                sourceEngine.chapter(rule, sourceId, url, allowCleartext, context)
+            }, ruleParser, chapterUrls = { bookId, sourceId ->
+                database.chapterDao().getChapters(bookId, sourceId).mapNotNull { it.url }
+            }),
         isMeteredNetwork = {
             appContext.getSystemService(ConnectivityManager::class.java)?.isActiveNetworkMetered ?: true
         },

@@ -14,7 +14,9 @@ import com.novelradar.app.source.http.SourceHttpClient
 import com.novelradar.app.source.http.SourceHttpPage
 import com.novelradar.app.source.parse.BookPageParser
 import com.novelradar.app.source.parse.ChapterPage
+import com.novelradar.app.source.parse.ChapterPageBoundary
 import com.novelradar.app.source.parse.ChapterPageParser
+import com.novelradar.app.source.parse.ChapterRequestContext
 import com.novelradar.app.source.parse.HtmlSelector
 import com.novelradar.app.source.parse.SearchPageParser
 import com.novelradar.app.source.parse.SelectorExpression
@@ -30,6 +32,9 @@ import java.nio.charset.CharacterCodingException
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
 import java.util.Locale
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import org.jsoup.Jsoup
 
@@ -204,26 +209,32 @@ class SourceEngine(
         sourceId: String,
         chapterUrl: String,
         allowCleartext: Boolean = false,
+        context: ChapterRequestContext = ChapterRequestContext(),
     ): SourceResult<ChapterPage> {
         if (!safeId(sourceId)) return unsafe("invalid source ID")
         if (rule.disabled) return unsafe("source is disabled")
         val chapterRule = rule.chapter ?: return unsafe("source has no chapter rule")
+        val boundary = ChapterPageBoundary(chapterUrl, context)
         val visited = hashSetOf<String>()
         val parsedFinalUrls = hashSetOf<String>()
         val parts = mutableListOf<String>()
         var contentBytes = 0L
         var url = chapterUrl
         var title: String? = null
+        fun accepted() = SourceResult.Success(ChapterPage(title.orEmpty(), parts.joinToString("\n\n")))
+        fun ambiguous() = SourceResult.Failure(SourceFailure.Parse("chapter.boundary", chapterRule.nextPage.orEmpty()))
         repeat(MAX_CHAPTER_PAGES) {
-            if (!visited.add(url)) return SourceResult.Success(ChapterPage(title.orEmpty(), parts.joinToString("\n\n")))
+            currentCoroutineContext().ensureActive()
+            if (boundary.isOtherCatalogChapter(url)) return if (parts.isEmpty()) ambiguous() else accepted()
+            if (!visited.add(chapterNetworkPageUrl(url))) return accepted()
             val page = when (val fetched = getPage(sourceId, url, allowCleartext)) {
                 is SourceResult.Success -> fetched.value
                 is SourceResult.Failure -> return fetched
             }
-            if (!parsedFinalUrls.add(page.finalUrl)) {
-                return SourceResult.Success(ChapterPage(title.orEmpty(), parts.joinToString("\n\n")))
-            }
-            visited.add(page.finalUrl)
+            if (boundary.isOtherCatalogChapter(page.finalUrl)) return if (parts.isEmpty()) ambiguous() else accepted()
+            val finalPageUrl = chapterNetworkPageUrl(page.finalUrl)
+            if (!parsedFinalUrls.add(finalPageUrl)) return accepted()
+            visited.add(finalPageUrl)
             val html = when (val decoded = decode(page)) {
                 is SourceResult.Success -> decoded.value
                 is SourceResult.Failure -> return decoded
@@ -232,6 +243,11 @@ class SourceEngine(
                 is SourceResult.Success -> result.value
                 is SourceResult.Failure -> return result
             }
+            currentCoroutineContext().ensureActive()
+            if (parts.isNotEmpty()) {
+                if (!boundary.isKnownTitle(title.orEmpty()) || !boundary.isKnownTitle(parsed.title)) return ambiguous()
+                if (!boundary.sameChapterTitle(title.orEmpty(), parsed.title)) return accepted()
+            }
             if (title == null) title = parsed.title
             val additionalBytes = parsed.content.toByteArray(Charsets.UTF_8).size.toLong() + if (parts.isEmpty()) 0 else 2
             if (contentBytes + additionalBytes > MAX_CHAPTER_CONTENT_BYTES) {
@@ -239,13 +255,18 @@ class SourceEngine(
             }
             contentBytes += additionalBytes
             parts += parsed.content
-            if (!chapterRule.pagination || parsed.nextPageUrl == null || parsed.nextPageUrl in visited) {
-                return SourceResult.Success(ChapterPage(title.orEmpty(), parts.joinToString("\n\n")))
+            val nextUrl = parsed.nextPageUrl
+            if (!chapterRule.pagination || nextUrl == null || chapterNetworkPageUrl(nextUrl) in visited ||
+                boundary.isOtherCatalogChapter(nextUrl) || boundary.isExplicitNextChapter(parsed.nextPageLabel)) {
+                return accepted()
             }
-            url = parsed.nextPageUrl
+            url = nextUrl
         }
-        return SourceResult.Success(ChapterPage(title.orEmpty(), parts.joinToString("\n\n")))
+        return accepted()
     }
+
+    private fun chapterNetworkPageUrl(url: String): String =
+        url.toHttpUrlOrNull()?.newBuilder()?.fragment(null)?.build()?.toString() ?: url
 
     private fun validateBookRequest(rule: RuleDto, sourceId: String, hit: SearchHit, bookId: String): SourceResult.Failure? {
         if (!safeId(sourceId) || !safeId(bookId)) return unsafe("invalid local source or book ID")

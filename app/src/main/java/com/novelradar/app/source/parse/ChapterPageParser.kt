@@ -12,6 +12,7 @@ data class ChapterPage(
     val title: String,
     val content: String,
     val nextPageUrl: String? = null,
+    val nextPageLabel: String? = null,
 )
 
 class ChapterPageParser(
@@ -37,6 +38,7 @@ class ChapterPageParser(
         }
         if (content.isBlank()) return SourceResult.Failure(SourceFailure.Parse("chapter.content", contentSelector))
 
+        var nextPageLabel: String? = null
         val nextPage = if (rule.pagination && !rule.nextPage.isNullOrBlank()) {
             val expression = SelectorExpression.parse(rule.nextPage)
             val node = try {
@@ -44,6 +46,7 @@ class ChapterPageParser(
             } catch (_: Selector.SelectorParseException) {
                 return SourceResult.Failure(SourceFailure.Parse("chapter.nextPage", rule.nextPage))
             }
+            nextPageLabel = node?.text()
             val raw = node?.attr("href")?.ifBlank { node.attr("value") }?.takeIf(String::isNotBlank)
             if (raw == null) null else {
                 val transformed = if (expression.script == null) raw else when (val result = scripts.transform(raw, expression.script)) {
@@ -53,7 +56,7 @@ class ChapterPageParser(
                 resolveRuleUrl(baseUrl, transformed)
             }
         } else null
-        return SourceResult.Success(ChapterPage(title, content, nextPage))
+        return SourceResult.Success(ChapterPage(title, content, nextPage, nextPageLabel))
     }
 
     private suspend fun field(

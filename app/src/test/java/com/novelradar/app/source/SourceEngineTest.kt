@@ -9,6 +9,7 @@ import com.novelradar.app.source.http.SearchRequestFactory
 import com.novelradar.app.source.http.SourceHttpClient
 import com.novelradar.app.source.parse.BookPageParser
 import com.novelradar.app.source.parse.ChapterPageParser
+import com.novelradar.app.source.parse.ChapterRequestContext
 import com.novelradar.app.source.parse.HtmlSelector
 import com.novelradar.app.source.parse.SearchPageParser
 import com.novelradar.app.source.parse.TocPageParser
@@ -22,6 +23,7 @@ import com.novelradar.app.source.script.QuickJsScriptExecutor
 import java.nio.charset.Charset
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeout
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -29,8 +31,190 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import okio.Buffer
 import org.junit.Test
+import org.junit.Assert.assertThrows
 
 class SourceEngineTest {
+    @Test fun fragmentOnlyContinuationDoesNotFetchAndAppendTheSameNetworkPage() = withServer { server ->
+        server.dispatcher = routing {
+            html("<h1>第一章</h1><div id=content>正文1</div><a class=next href='#page'>下一页</a>")
+        }
+        val result = runBlocking { withTimeout(10_000) {
+            engine().chapter(paginatedChapterRule(server), "source-1",
+                server.url("/chapter/1").toString(), allowCleartext = true)
+        } }
+
+        assertThat((result as SourceResult.Success).value.content).isEqualTo("正文1")
+        assertThat(server.requestCount).isEqualTo(1)
+    }
+
+    @Test fun knownNextCatalogChapterStopsBeforeAnotherRequest() = withServer { server ->
+        server.enqueue(html("<h1>第一章</h1><div id=content>正文1</div><a class=next href='/chapter/2#body'>下一页</a>"))
+        server.enqueue(html("<h1>第一章</h1><div id=content>另一章正文</div>"))
+        val result = runBlocking { engine().chapter(paginatedChapterRule(server), "source-1",
+            server.url("/chapter/1").toString(), allowCleartext = true,
+            context = ChapterRequestContext(setOf(server.url("/chapter/1").toString(),
+                server.url("/chapter/2#catalog").toString()))) }
+
+        assertThat((result as SourceResult.Success).value.content).isEqualTo("正文1")
+        assertThat(server.requestCount).isEqualTo(1)
+    }
+
+    @Test fun explicitNextChapterLabelsStopBeforeAnotherRequest() {
+        listOf("下一章", "Next chapter").forEach { label -> withServer { server ->
+            server.enqueue(html("<h1>第一章</h1><div id=content>正文1</div><a class=next href='/chapter/2'>$label</a>"))
+            server.enqueue(html("<h1>第一章</h1><div id=content>另一章正文</div>"))
+            val result = runBlocking { engine().chapter(paginatedChapterRule(server), "source-1",
+                server.url("/chapter/1").toString(), allowCleartext = true) }
+
+            assertThat((result as SourceResult.Success).value.content).isEqualTo("正文1")
+            assertThat(server.requestCount).isEqualTo(1)
+        } }
+    }
+
+    @Test fun sameChapterWithExplicitPageSuffixesRetainsAllContent() = withServer { server ->
+        val titles = listOf("第一章 (1/3)", "第一章 (2/3)", "第一章（第3页）")
+        server.dispatcher = routing { request ->
+            val number = request.requestUrl!!.encodedPath.substringAfterLast('/').toInt()
+            val next = if (number < 3) "<a class=next href='/page/${number + 1}'>下一页</a>" else ""
+            html("<h1>${titles[number - 1]}</h1><div id=content>正文$number</div>$next")
+        }
+        val result = runBlocking { engine().chapter(paginatedChapterRule(server), "source-1",
+            server.url("/page/1").toString(), allowCleartext = true) }
+
+        val page = (result as SourceResult.Success).value
+        assertThat(page.title).isEqualTo("第一章 (1/3)")
+        assertThat(page.content).isEqualTo("正文1\n\n正文2\n\n正文3")
+        assertThat(server.requestCount).isEqualTo(3)
+    }
+
+    @Test fun uniqueUnnumberedChapterTitleCanContinueAcrossPages() = withServer { server ->
+        server.enqueue(html("<h1>序章</h1><div id=content>首段</div><a class=next href='/page/2'>下一页</a>"))
+        server.enqueue(html("<h1>序章 (2/2)</h1><div id=content>尾段</div>"))
+        val result = runBlocking { engine().chapter(paginatedChapterRule(server), "source-1",
+            server.url("/page/1").toString(), allowCleartext = true) }
+
+        assertThat((result as SourceResult.Success).value.content).isEqualTo("首段\n\n尾段")
+        assertThat(server.requestCount).isEqualTo(2)
+    }
+
+    @Test fun genericFirstTitleCannotProveUnknownContinuation() = withServer { server ->
+        server.enqueue(html("<h1>正文</h1><div id=content>首段</div><a class=next href='/page/2'>下一页</a>"))
+        server.enqueue(html("<h1>第一章</h1><div id=content>尾段</div>"))
+        val result = runBlocking { engine().chapter(paginatedChapterRule(server), "source-1",
+            server.url("/page/1").toString(), allowCleartext = true) }
+
+        assertThat(result).isEqualTo(SourceResult.Failure(SourceFailure.Parse("chapter.boundary", "a.next")))
+        assertThat(server.requestCount).isEqualTo(2)
+    }
+
+    @Test fun genericLaterTitleCannotProveUnknownContinuation() = withServer { server ->
+        server.enqueue(html("<h1>第一章</h1><div id=content>首段</div><a class=next href='/page/2'>下一页</a>"))
+        server.enqueue(html("<h1>章节</h1><div id=content>尾段</div>"))
+        val result = runBlocking { engine().chapter(paginatedChapterRule(server), "source-1",
+            server.url("/page/1").toString(), allowCleartext = true) }
+
+        assertThat(result).isEqualTo(SourceResult.Failure(SourceFailure.Parse("chapter.boundary", "a.next")))
+        assertThat(server.requestCount).isEqualTo(2)
+    }
+
+    @Test fun blankLaterTitlePreservesTheOriginalParserFailure() = withServer { server ->
+        server.enqueue(html("<h1>第一章</h1><div id=content>首段</div><a class=next href='/page/2'>下一页</a>"))
+        server.enqueue(html("<h1> </h1><div id=content>尾段</div>"))
+        val result = runBlocking { engine().chapter(paginatedChapterRule(server), "source-1",
+            server.url("/page/1").toString(), allowCleartext = true) }
+
+        assertThat(result).isEqualTo(SourceResult.Failure(SourceFailure.Parse("chapter.title", "h1")))
+    }
+
+    @Test fun redirectToKnownOtherCatalogChapterDoesNotAppendItsBody() = withServer { server ->
+        server.dispatcher = routing { request -> when (request.requestUrl!!.encodedPath) {
+            "/chapter/1" -> html("<h1>第一章</h1><div id=content>首段</div><a class=next href='/bounce'>下一页</a>")
+            "/bounce" -> MockResponse().setResponseCode(302).addHeader("Location", "/chapter/2")
+            "/chapter/2" -> html("<h1>第一章</h1><div id=content>另一章正文</div>")
+            else -> MockResponse().setResponseCode(404)
+        } }
+        val result = runBlocking { engine().chapter(paginatedChapterRule(server), "source-1",
+            server.url("/chapter/1").toString(), allowCleartext = true,
+            context = ChapterRequestContext(setOf(server.url("/chapter/2").toString()))) }
+
+        assertThat((result as SourceResult.Success).value.content).isEqualTo("首段")
+        assertThat(server.requestCount).isEqualTo(3)
+    }
+
+    @Test fun initialRedirectToOtherCatalogChapterIsABoundaryFailure() = withServer { server ->
+        server.enqueue(MockResponse().setResponseCode(302).addHeader("Location", "/chapter/2"))
+        server.enqueue(html("<h1>第二章</h1><div id=content>另一章正文</div>"))
+        val result = runBlocking { engine().chapter(paginatedChapterRule(server), "source-1",
+            server.url("/chapter/1").toString(), allowCleartext = true,
+            context = ChapterRequestContext(setOf(server.url("/chapter/2").toString()))) }
+
+        assertThat(result).isEqualTo(SourceResult.Failure(SourceFailure.Parse("chapter.boundary", "a.next")))
+        assertThat(server.requestCount).isEqualTo(2)
+    }
+
+    @Test fun queryChapterIdsStayDistinctWhileCatalogFragmentsAreIgnored() = withServer { server ->
+        server.enqueue(html("<h1>第一章</h1><div id=content>首段</div><a class=next href='/read?id=1&amp;page=2'>下一页</a>"))
+        server.enqueue(html("<h1>第一章（第2页）</h1><div id=content>尾段</div><a class=next href='/read?id=2#body'>下一页</a>"))
+        server.enqueue(html("<h1>第一章</h1><div id=content>另一章正文</div>"))
+        val result = runBlocking { engine().chapter(paginatedChapterRule(server), "source-1",
+            server.url("/read?id=1").toString(), allowCleartext = true,
+            context = ChapterRequestContext(setOf(server.url("/read?id=1#catalog").toString(),
+                server.url("/read?id=2#catalog").toString()))) }
+
+        assertThat((result as SourceResult.Success).value.content).isEqualTo("首段\n\n尾段")
+        assertThat(server.requestCount).isEqualTo(2)
+    }
+
+    @Test fun chapterPoliciesRejectInvalidSourceDisabledRuleAndCleartextBeforeNetwork() = withServer { server ->
+        val rule = paginatedChapterRule(server)
+        val engine = engine()
+        val url = server.url("/chapter/1").toString()
+        val results = runBlocking { listOf(
+            engine.chapter(rule, "../source", url, allowCleartext = true),
+            engine.chapter(rule.copy(disabled = true), "source-1", url, allowCleartext = true),
+            engine.chapter(rule, "source-1", url),
+        ) }
+
+        results.forEach { assertThat((it as SourceResult.Failure).error).isInstanceOf(SourceFailure.UnsafeRule::class.java) }
+        assertThat(server.requestCount).isEqualTo(0)
+    }
+
+    @Test fun chapterParsingCancellationIsRethrown() = withServer { server ->
+        server.enqueue(html("<h1>第一章</h1><div id=content>正文</div>"))
+        val scripts = object : ScriptExecutor {
+            override suspend fun transform(input: String, script: String): SourceResult<String> =
+                throw CancellationException("parse cancelled")
+        }
+        val rule = paginatedChapterRule(server).let { it.copy(chapter = it.chapter!!.copy(title = "h1@js:cancel")) }
+
+        val cancelled = assertThrows(CancellationException::class.java) { runBlocking {
+            engine(scripts).chapter(rule, "source-1", server.url("/chapter/1").toString(), allowCleartext = true)
+        } }
+        assertThat(cancelled.message).isEqualTo("parse cancelled")
+        assertThat(server.requestCount).isEqualTo(1)
+    }
+
+    @Test fun nextChapterIsNotAppendedAsAnotherPage() = withServer { server ->
+        server.dispatcher = routing { request ->
+            val number = request.requestUrl!!.encodedPath.substringAfterLast('/').toInt()
+            val next = if (number < 3) "<a class=next href='/chapter/${number + 1}'>下一页</a>" else ""
+            html("<h1>第${number}章</h1><div id=content><p>正文$number</p></div>$next")
+        }
+        val rule = rule(server).copy(chapter = ChapterRuleDto(
+            title = "h1", content = "#content", pagination = true, nextPage = "a.next",
+        ))
+
+        val result = runBlocking { withTimeout(10_000) {
+            engine().chapter(rule, "source-1", server.url("/chapter/1").toString(), allowCleartext = true)
+        } }
+
+        assertThat(result).isInstanceOf(SourceResult.Success::class.java)
+        val page = (result as SourceResult.Success).value
+        assertThat(page.title).isEqualTo("第1章")
+        assertThat(page.content).isEqualTo("正文1")
+        assertThat(server.requestCount).isEqualTo(2)
+    }
+
     @Test fun detailHttpFlowCarriesPartialIdentityButLegacyBookKeepsOriginalScriptFailure() = withServer { server ->
         val page = "<h1>另一部作品</h1><div id=author>叶子</div><div id=intro>简介</div>"
         server.enqueue(html(page))
@@ -338,7 +522,7 @@ class SourceEngineTest {
         server.dispatcher = routing { request ->
             val number = request.requestUrl!!.encodedPath.substringAfterLast('/').toInt()
             val next = if (number < 6) "<a class=next href='/chapter/${number + 1}'>下一页</a>" else ""
-            html("<h1>章节</h1><div id=content><p>$paragraph</p></div>$next")
+            html("<h1>第一章</h1><div id=content><p>$paragraph</p></div>$next")
         }
         val rule = rule(server).copy(chapter = ChapterRuleDto(
             title = "h1", content = "#content", pagination = true, nextPage = "a.next",
@@ -356,7 +540,7 @@ class SourceEngineTest {
         server.dispatcher = routing { request ->
             val number = request.requestUrl!!.encodedPath.substringAfterLast('/').toInt()
             val next = if (number < 5) "<a class=next href='/chapter/${number + 1}'>下一页</a>" else ""
-            html("<h1>章节</h1><div id=content><p>$paragraph</p></div>$next")
+            html("<h1>第一章</h1><div id=content><p>$paragraph</p></div>$next")
         }
         val rule = rule(server).copy(chapter = ChapterRuleDto(
             title = "h1", content = "#content", pagination = true, nextPage = "a.next",
@@ -410,7 +594,8 @@ class SourceEngineTest {
     @Test fun chapterPaginationStopsAtTwentyPages() = withServer { server ->
         server.dispatcher = routing { request ->
             val number = request.requestUrl!!.encodedPath.substringAfterLast('/').toInt()
-            html("<h1>第${number}章</h1><div id=content><p>页$number</p></div><a class=next href='/chapter/${number + 1}'>下一页</a>")
+            val title = if (number == 1) "第1章" else "第1章 ($number/20)"
+            html("<h1>$title</h1><div id=content><p>页$number</p></div><a class=next href='/chapter/${number + 1}'>下一页</a>")
         }
         val rule = rule(server).copy(chapter = ChapterRuleDto(
             title = "h1", content = "#content", nextPage = "a.next", pagination = true,
@@ -499,6 +684,10 @@ class SourceEngineTest {
         toc = TocRuleDto(item = "#chapters a"),
         chapter = ChapterRuleDto(title = "h1", content = "#content"),
     )
+
+    private fun paginatedChapterRule(server: MockWebServer) = rule(server).copy(chapter = ChapterRuleDto(
+        title = "h1", content = "#content", nextPage = "a.next", pagination = true,
+    ))
 
     private fun hit(server: MockWebServer) = SearchHit(
         sourceId = "source-1", bookName = "星河旅人", author = "叶子",

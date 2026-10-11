@@ -20,6 +20,19 @@ class ChapterPageParserTest {
         <a class="next" href="../2.html">下一页</a></body></html>
     """.trimIndent()
 
+    @Test fun nextPageLabelComesFromTheSameSelectedLinkAsItsUrl() = runBlocking {
+        val html = "<h1>第一章</h1><div id=content>正文</div>" +
+            "<a href='/wrong'>下一章</a><a class=next href='/page/2'><span>下一页</span></a>" +
+            "<a class=next href='/chapter/2'>下一章</a>"
+
+        val result = parser.parse(html, "https://books.example.test/chapter/1",
+            ChapterRuleDto(title = "h1", content = "#content", nextPage = "a.next", pagination = true))
+
+        val parsed = (result as SourceResult.Success).value
+        assertThat(parsed.nextPageUrl).isEqualTo("https://books.example.test/page/2")
+        assertThat(parsed.nextPageLabel).isEqualTo("下一页")
+    }
+
     @Test fun parsesTitleCleanedContentAndAbsoluteNextPage() = runBlocking {
         val rule = ChapterRuleDto(
             title = ".title@js:r=r.replace('旧','新')",
@@ -31,7 +44,7 @@ class ChapterPageParserTest {
 
         assertThat(parser.parse(page, "https://books.example.test/c/1.html", rule)).isEqualTo(
             SourceResult.Success(
-                ChapterPage("新标题", "新正文\n第二段", "https://books.example.test/2.html")
+                ChapterPage("新标题", "新正文\n第二段", "https://books.example.test/2.html", "下一页")
             )
         )
     }
