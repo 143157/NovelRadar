@@ -3,6 +3,7 @@ package com.novelradar.app.data.db.entity
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
+import com.novelradar.app.domain.model.ChapterContentFormat
 
 @Entity(
     tableName = "chapters",
@@ -31,4 +32,6 @@ data class ChapterEntity(
     val localFilePath: String? = null,
     val contentSha256: String? = null,
     val contentBytes: Long? = null,
+    @androidx.room.ColumnInfo(defaultValue = "0")
+    val contentFormatVersion: Int = ChapterContentFormat.LEGACY,
 )

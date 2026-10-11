@@ -548,12 +548,13 @@ class DefaultChapterRepositoryTest {
         override suspend fun getChapter(bookId: String, sourceId: String, chapterId: String): ChapterEntity? =
             rows[Triple(bookId, sourceId, chapterId)]
         override suspend fun updateStoredContent(bookId: String, sourceId: String, chapterId: String,
-            expectedUrl: String, state: String, path: String, sha256: String, byteCount: Long): Int {
+            expectedUrl: String, state: String, path: String, sha256: String, byteCount: Long, contentFormatVersion: Int): Int {
             beforeMetadataUpdate?.invoke()
             val key = Triple(bookId, sourceId, chapterId)
             val row = rows[key]?.takeIf { it.url == expectedUrl } ?: return 0
-            rows[key] = row.copy(localContentState = state, localFilePath = path,
-                contentSha256 = sha256, contentBytes = byteCount)
+            rows[key] = row.copy(localContentState = if (row.localContentState == "DOWNLOADED") "DOWNLOADED" else state,
+                localFilePath = path, contentSha256 = sha256, contentBytes = byteCount,
+                contentFormatVersion = contentFormatVersion)
             return 1
         }
         override suspend fun deleteForSource(bookId: String, sourceId: String) {

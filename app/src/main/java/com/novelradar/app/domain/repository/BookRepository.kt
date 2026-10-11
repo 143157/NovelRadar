@@ -3,6 +3,7 @@ package com.novelradar.app.domain.repository
 import com.novelradar.app.domain.model.Book
 import com.novelradar.app.domain.model.BookDetails
 import com.novelradar.app.domain.model.BookSource
+import com.novelradar.app.domain.model.ChapterContentFormat
 import com.novelradar.app.domain.model.SearchHit
 import kotlinx.coroutines.flow.Flow
 
@@ -25,6 +26,7 @@ data class ReadingLocation(
     val chapterIndex: Int,
     val offset: Int,
     val updatedAtEpochMillis: Long,
+    val contentFormatVersion: Int = ChapterContentFormat.CURRENT,
 )
 
 interface BookRepository {

@@ -11,6 +11,7 @@ import com.novelradar.app.data.db.entity.DownloadTaskEntity
 import com.novelradar.app.data.db.entity.ReadingProgressEntity
 import com.novelradar.app.data.db.entity.ShelfEntryEntity
 import com.novelradar.app.data.db.entity.SourceRuleEntity
+import com.novelradar.app.domain.model.ChapterContentFormat
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -37,19 +38,24 @@ class NovelDatabaseTest {
         database.chapterDao().upsert(row)
         assertThat(database.chapterDao().updateStoredContent("book-1", "source-1", "c-1", "https://example.test/old",
             "CACHED", "wrong", "wrong", 1)).isEqualTo(0)
+        assertThat(database.chapterDao().getChapter("book-1", "source-1", "c-1")!!.contentFormatVersion)
+            .isEqualTo(ChapterContentFormat.LEGACY)
         assertThat(database.chapterDao().updateStoredContent("book-1", "source-1", "c-1", row.url!!,
             "CACHED", "books/book-1/source-1/c-1.txt", "abc", 20)).isEqualTo(1)
         assertThat(database.chapterDao().getChapter("book-1", "source-1", "c-1")!!.localContentState).isEqualTo("DOWNLOADED")
+        assertThat(database.chapterDao().getChapter("book-1", "source-1", "c-1")!!.contentFormatVersion)
+            .isEqualTo(ChapterContentFormat.CURRENT)
     }
 
     @Test fun changedCatalogUrlDoesNotPreserveContentFromTheOldUrl() = runBlocking {
         database.bookDao().upsertBookAndSource(book(), bookSource())
         database.chapterDao().upsert(chapter("c-1", 0).copy(url = "https://example.test/old", localContentState = "DOWNLOADED",
-            localFilePath = "old", contentSha256 = "abc", contentBytes = 20))
+            localFilePath = "old", contentSha256 = "abc", contentBytes = 20, contentFormatVersion = ChapterContentFormat.CURRENT))
         database.chapterDao().replaceSnapshot("book-1", "source-1", listOf(chapter("c-1", 0).copy(url = "https://example.test/new")))
         val current = database.chapterDao().getChapter("book-1", "source-1", "c-1")!!
         assertThat(current.localContentState).isEqualTo("NOT_STORED")
         assertThat(current.contentSha256).isNull()
+        assertThat(current.contentFormatVersion).isEqualTo(ChapterContentFormat.LEGACY)
     }
 
     @Test fun roomDownloadCheckpointRejectsNewGenerationAndNeverReinsertsDeletedTask() = runBlocking {
@@ -94,7 +100,7 @@ class NovelDatabaseTest {
         database.bookDao().upsertBookAndSource(book(), bookSource())
         database.chapterDao().upsertAll(listOf(
             chapter("c-1", 0).copy(localContentState = "DOWNLOADED", localFilePath = "books/book-1/c-1.txt",
-                contentSha256 = "abc", contentBytes = 42),
+                contentSha256 = "abc", contentBytes = 42, contentFormatVersion = ChapterContentFormat.CURRENT),
             chapter("c-2", 1),
         ))
 
@@ -109,6 +115,7 @@ class NovelDatabaseTest {
         assertThat(rows.first().localContentState).isEqualTo("DOWNLOADED")
         assertThat(rows.first().localFilePath).isEqualTo("books/book-1/c-1.txt")
         assertThat(rows.first().contentSha256).isEqualTo("abc")
+        assertThat(rows.first().contentFormatVersion).isEqualTo(ChapterContentFormat.CURRENT)
     }
 
     @Test fun shelfUpsertKeepsOneRowPerBook() = runBlocking {
@@ -164,6 +171,18 @@ class NovelDatabaseTest {
         database.bookDao().upsertShelfEntry(ShelfEntryEntity("book-1", 1, preferredSourceId = "foreign"))
         database.bookDao().upsertProgress(progress(1, 0))
         assertThat(database.bookDao().observeShelfDetails().first().single().selectedSourceId).isEqualTo("source-1")
+    }
+
+    @Test fun shelfProjectionExposesActualCurrentAndLegacyMarkers() = runBlocking {
+        database.bookDao().upsertBookAndSource(book(), bookSource())
+        database.bookDao().addShelfPreservingHistory("book-1", 10, "source-1")
+        for (format in listOf(ChapterContentFormat.CURRENT, ChapterContentFormat.LEGACY)) {
+            database.bookDao().upsertProgress(progress(1, 77).copy(contentFormatVersion = format))
+            val row = database.bookDao().observeShelfDetails().first().single()
+            assertThat(row.progress?.contentFormatVersion).isEqualTo(format)
+            assertThat(row.progress?.offset).isEqualTo(77)
+            assertThat(row.selectedSourceId).isEqualTo("source-1")
+        }
     }
 
     @Test fun clearingLocalMetadataKeepsCatalogAndProgress() = runBlocking {

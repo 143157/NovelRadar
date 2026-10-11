@@ -12,6 +12,7 @@ import com.novelradar.app.domain.model.BookDetails
 import com.novelradar.app.domain.model.BookIdentityEvidence
 import com.novelradar.app.domain.model.SourceHealthStatus
 import com.novelradar.app.domain.model.SourceFailure
+import com.novelradar.app.domain.model.ChapterContentFormat
 import com.novelradar.app.domain.repository.ReadingLocation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +24,50 @@ import org.junit.Test
 class RoomBookRepositoryTest {
     private val dao = FakeBookDao()
     private val repository = RoomBookRepository(dao)
+
+    @Test fun legacyProgressRemainsLegacyInBothProgressAndShelfWithoutChangingHistory() = runTest {
+        val book = repository.saveSearchHit(hit("source-a"))
+        repository.saveSearchHit(hit("source-b"))
+        repository.addToShelf(book.bookId, 10, "source-b")
+        val legacy = ReadingProgressEntity(book.bookId, "source-a", "chapter-2", 2, 77, 50,
+            contentFormatVersion = ChapterContentFormat.LEGACY)
+        dao.upsertProgress(legacy)
+
+        val expected = ReadingLocation(book.bookId, "source-a", "chapter-2", 2, 77, 50,
+            contentFormatVersion = ChapterContentFormat.LEGACY)
+        val shelf = repository.observeShelf().first().single()
+        assertThat(listOf(repository.progress(book.bookId).first(), shelf.location))
+            .containsExactly(expected, expected)
+        assertThat(shelf.preferredSourceId).isEqualTo("source-b")
+        assertThat(shelf.addedAtEpochMillis).isEqualTo(10)
+        assertThat(dao.getProgress(book.bookId)).isEqualTo(legacy)
+        assertThat(repository.observeSources(book.bookId).first().map { it.sourceId })
+            .containsExactly("source-a", "source-b")
+    }
+
+    @Test fun savingCurrentPositionPersistsTheProvidedCurrentMarker() = runTest {
+        val book = repository.saveSearchHit(hit("source-a"))
+        val location = ReadingLocation(book.bookId, "source-a", "chapter-2", 2, 77, 50,
+            contentFormatVersion = ChapterContentFormat.CURRENT)
+
+        repository.saveProgress(location)
+
+        assertThat(dao.getProgress(book.bookId)).isEqualTo(ReadingProgressEntity(
+            book.bookId, "source-a", "chapter-2", 2, 77, 50,
+            contentFormatVersion = ChapterContentFormat.CURRENT))
+        assertThat(repository.progress(book.bookId).first()).isEqualTo(location)
+    }
+
+    @Test fun savingExplicitLegacyPositionDoesNotPromoteItsFormat() = runTest {
+        val book = repository.saveSearchHit(hit("source-a"))
+        val location = ReadingLocation(book.bookId, "source-a", "chapter-2", 2, 77, 50,
+            contentFormatVersion = ChapterContentFormat.LEGACY)
+
+        repository.saveProgress(location)
+
+        assertThat(dao.getProgress(book.bookId)?.contentFormatVersion).isEqualTo(ChapterContentFormat.LEGACY)
+        assertThat(repository.progress(book.bookId).first()).isEqualTo(location)
+    }
 
     @Test fun currentDetailsCheckIsReadOnlyAndRejectsChangedBookMappingOrOwnership() = runTest {
         val book = repository.saveSearchHit(hit("source-a"))

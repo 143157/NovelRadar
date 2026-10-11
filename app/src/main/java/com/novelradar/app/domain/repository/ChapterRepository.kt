@@ -9,6 +9,7 @@ data class LoadedChapter(
     val chapter: Chapter,
     val content: String,
     val origin: ChapterOrigin,
+    val boundaryVerified: Boolean = true,
 )
 
 interface ChapterRepository {

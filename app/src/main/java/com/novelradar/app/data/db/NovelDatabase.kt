@@ -20,7 +20,7 @@ import com.novelradar.app.data.db.entity.SourceRuleEntity
         ReadingProgressEntity::class,
         DownloadTaskEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class NovelDatabase : RoomDatabase() {
@@ -31,6 +31,12 @@ abstract class NovelDatabase : RoomDatabase() {
 
     companion object {
         const val NAME = "novel-radar.db"
+        val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE chapters ADD COLUMN contentFormatVersion INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE reading_progress ADD COLUMN contentFormatVersion INTEGER NOT NULL DEFAULT 0")
+            }
+        }
         val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE download_tasks ADD COLUMN attemptedNonNetworkChapterIds TEXT NOT NULL DEFAULT ''")

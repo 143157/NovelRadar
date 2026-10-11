@@ -94,6 +94,7 @@ class RoomBookRepository(private val dao: BookDao) : BookRepository {
         dao.saveReadingLocation(ReadingProgressEntity(
             location.bookId, location.sourceId, location.chapterId,
             location.chapterIndex, location.offset, location.updatedAtEpochMillis,
+            location.contentFormatVersion,
         ))
     }
 }
@@ -112,4 +113,5 @@ private fun BookSourceEntity.toDomain() = BookSource(
 
 private fun ReadingProgressEntity.toDomain() = ReadingLocation(
     bookId, sourceId, chapterId, chapterIndex, offset, updatedAtEpochMillis,
+    contentFormatVersion,
 )

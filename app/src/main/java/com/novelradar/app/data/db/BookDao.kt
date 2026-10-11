@@ -108,6 +108,7 @@ interface BookDao {
         p.bookId AS progress_bookId, p.sourceId AS progress_sourceId, p.chapterId AS progress_chapterId,
         p.chapterIndex AS progress_chapterIndex, p.offset AS progress_offset,
         p.updatedAtEpochMillis AS progress_updatedAtEpochMillis,
+        p.contentFormatVersion AS progress_contentFormatVersion,
         bs.sourceId AS selectedSourceId, COUNT(c.chapterId) AS chapterCount,
         SUM(CASE WHEN c.chapterId IS NOT NULL AND (p.sourceId IS NULL OR p.sourceId != bs.sourceId OR c.chapterIndex > p.chapterIndex) THEN 1 ELSE 0 END) AS unreadCount,
         (SELECT title FROM chapters WHERE bookId = b.bookId AND sourceId = bs.sourceId ORDER BY chapterIndex DESC LIMIT 1) AS lastChapterTitle

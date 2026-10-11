@@ -5,6 +5,7 @@ import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Upsert
 import com.novelradar.app.data.db.entity.ChapterEntity
+import com.novelradar.app.domain.model.ChapterContentFormat
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -31,7 +32,8 @@ interface ChapterDao {
         val preserved = chapters.map { chapter ->
             oldById[chapter.chapterId]?.let { old ->
                 old.takeIf { it.url == chapter.url }?.let { chapter.copy(localContentState = old.localContentState, localFilePath = old.localFilePath,
-                    contentSha256 = old.contentSha256, contentBytes = old.contentBytes)
+                    contentSha256 = old.contentSha256, contentBytes = old.contentBytes,
+                    contentFormatVersion = old.contentFormatVersion)
                 } ?: chapter
             } ?: chapter
         }
@@ -47,7 +49,7 @@ interface ChapterDao {
 
     @Query(
         "UPDATE chapters SET localContentState = CASE WHEN localContentState = 'DOWNLOADED' THEN 'DOWNLOADED' ELSE :state END, localFilePath = :path, " +
-            "contentSha256 = :sha256, contentBytes = :byteCount " +
+            "contentSha256 = :sha256, contentBytes = :byteCount, contentFormatVersion = :contentFormatVersion " +
             "WHERE bookId = :bookId AND sourceId = :sourceId AND chapterId = :chapterId " +
             "AND url = :expectedUrl",
     )
@@ -60,6 +62,7 @@ interface ChapterDao {
         path: String,
         sha256: String,
         byteCount: Long,
+        contentFormatVersion: Int = ChapterContentFormat.CURRENT,
     ): Int
 
     @Query("DELETE FROM chapters WHERE bookId = :bookId AND sourceId = :sourceId")
