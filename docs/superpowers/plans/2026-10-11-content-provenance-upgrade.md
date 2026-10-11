@@ -12,7 +12,7 @@
 
 ## Dependency and boundary
 
-Execute only after the independent specification and quality reviews of source-boundary commit `1275491` pass. The source-only stage is not a new user deliverable. Do not alter its title/URL boundary rules, chapter IDs, book keys, source mapping or download task generations. This phase establishes the legacy recovery seam before the continuous reader and character display phase.
+The dependency is complete: independent cumulative specification and quality reviews of source-boundary commits `1275491` and `b9771c5` passed, and root's forced final unit run produced 423 tests with zero failures/errors/skips. The source-only stage is not a new user deliverable. Do not alter its title/URL boundary rules, chapter IDs, book keys, source mapping or download task generations. This phase establishes the legacy recovery seam before the continuous reader and character display phase. Execute Tasks 1, 2 and 3 sequentially with a fresh implementer and independent reviews after each; no stable APK is published between these partial stages.
 
 ## Task 1: Add content and position format markers with an explicit migration
 
