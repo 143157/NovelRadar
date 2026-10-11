@@ -32,7 +32,7 @@ class ChapterPageBoundary(initialUrl: String, context: ChapterRequestContext = C
 
     private fun normalize(value: String): String =
         Normalizer.normalize(value, Normalizer.Form.NFKC)
-            .replace(PAGE_SUFFIX, "").filterNot(Char::isWhitespace).lowercase(Locale.ROOT)
+            .filterNot(Char::isWhitespace).replace(PAGE_SUFFIX, "").lowercase(Locale.ROOT)
 
     private companion object {
         val PAGE_SUFFIX = Regex("""\s*[\(\[【]\s*(?:\d+\s*/\s*\d+|第?\s*[0-9零〇一二三四五六七八九十百千万]+\s*页)\s*[\)\]】]\s*$""")

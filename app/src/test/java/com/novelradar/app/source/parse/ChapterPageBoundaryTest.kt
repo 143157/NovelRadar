@@ -4,6 +4,21 @@ import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 
 class ChapterPageBoundaryTest {
+    @Test(timeout = 3_000L) fun longInteriorWhitespaceKeepsKnownChapterIdentityWithinTimeLimit() {
+        val boundary = ChapterPageBoundary("https://books.example.test/1")
+        val title = "序章" + " ".repeat(160_000) + "尾声"
+
+        assertThat(boundary.isKnownTitle(title)).isTrue()
+        assertThat(boundary.sameChapterTitle(title, "序章尾声")).isTrue()
+    }
+
+    @Test fun whitespaceInsideExplicitPageNumberDoesNotChangeChapterIdentity() {
+        val boundary = ChapterPageBoundary("https://books.example.test/1")
+
+        assertThat(boundary.sameChapterTitle("第一章", "第一章（第 二 十 页）")).isTrue()
+        assertThat(boundary.sameChapterTitle("第一章", "第一章（二）")).isFalse()
+    }
+
     @Test fun catalogUrlsIgnoreFragmentsButKeepChapterQueries() {
         val boundary = ChapterPageBoundary("https://BOOKS.example.test/read?id=1#top",
             ChapterRequestContext(setOf("https://books.example.test/read?id=1",
