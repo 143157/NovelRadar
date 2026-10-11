@@ -12,7 +12,7 @@
 
 ## Overall repair checklist
 
-- [x] Correct network chapter boundaries (this plan).
+- [ ] Correct network chapter boundaries (this plan; additional long-title audit fix pending).
 - [ ] Distinguish legacy mixed content and preserve old positions/files during repair.
 - [ ] Implement bounded continuous reading in both modes, actual-visible-chapter progress and Unicode character-count display.
 - [ ] Keep upcoming two-chapter caching automatic, reuse in-flight requests and validate request-count performance.
@@ -100,7 +100,7 @@ class ChapterPageBoundary(initialUrl: String, context: ChapterRequestContext) {
     private fun canonical(url: String): String? =
         url.toHttpUrlOrNull()?.newBuilder()?.fragment(null)?.build()?.toString()
     private fun normalized(value: String): String = Normalizer.normalize(value, Normalizer.Form.NFKC)
-        .replace(PAGE_SUFFIX, "").filterNot(Char::isWhitespace).lowercase(Locale.ROOT)
+        .filterNot(Char::isWhitespace).replace(PAGE_SUFFIX, "").lowercase(Locale.ROOT)
     private companion object {
         val GENERIC = setOf("正文", "章节", "内容", "小说", "chapter", "content")
         val PAGE_SUFFIX = Regex("""\s*[\(\[【]\s*(?:\d+\s*/\s*\d+|第?\s*[0-9零〇一二三四五六七八九十百千万]+\s*页)\s*[\)\]】]\s*$""")
@@ -215,7 +215,7 @@ RuleBasedChapterContentFetcher(
 
 Test this actual rule-fetcher/catalog-context path, not merely a mock accepting the new parameter. The empty default preserves standalone fixture convenience but cannot be mistaken for evidence that the production graph supplies the catalog. Do not change repository cache/storage/leases, database schema, worker, identities, icon, or reader UI in this stage.
 
-- [x] **Step 4: Verify, self-review and commit explicit files**
+- [ ] **Step 4: Verify, self-review and commit explicit files**
 
 Replace the old twenty-*different*-chapter sample with twenty pages of one genuinely named chapter, then preserve its exact twenty-page cap assertion. Add the separate cross-chapter regression above; do not simply relax old tests to pass. Check legitimate multi-page contents remain complete, including page separators and exact aggregate byte boundaries.
 
@@ -229,3 +229,5 @@ git diff --check
 Record actual XML test/suite/failure/error/skip counts and all lint warnings. Explicitly stage only this stage's app/test files, commit `fix: keep chapter pagination inside catalog boundaries`, and release writer/Gradle ownership. Root independently verifies, then separate specification and quality reviewers inspect the actual cumulative stage diff. Do not start the next implementation stage with unresolved review issues. Do not copy a new stable APK yet: continuous reader/progress and legacy-cache stages remain pending.
 
 Completion evidence (2026-10-11): application commit `1275491595a75500a622f428a230a9becbb00a82` contains exactly the nine authorized files. Root directly inspected the original cross-chapter RED (1 test/1 failure), engine RED (37/8), fragment-only duplicate RED (1/1), actual production graph/seam and the real fetcher→HTTP regression. The recorded parser/helper GREEN was 12 tests/2 suites; engine GREEN 50/3; final focused GREEN 75/4, all zero failures/errors/skips. Independent full milestone verification exited 0. Root additionally forced a unit rerun: all 26 tasks executed in 1m 7s, producing 421 tests/43 suites with zero failures/errors/skips. SARIF has seven existing warnings and zero errors. Independent specification and code-quality reviews both passed without outstanding issues. The fragment-only regression led to request-scoped network URL canonicalization in the chapter loop; stored chapter URLs/IDs are unchanged. No reader/cache/schema/download/resource logic or stable deliverable APK changed in this stage. The next non-destructive content/progress upgrade is planned in `2026-10-11-content-provenance-upgrade.md`; continuous reading, character display and prefetch lifecycle remain incomplete.
+
+Additional performance audit (2026-10-11): before entering the next stage, root ran the actual Java page-suffix pattern against interior-whitespace titles: 8,000 spaces took 62 ms and 16,000 spaces 249 ms on the local JDK. The unanchored leading whitespace scan happens before whitespace normalization, so a permitted script-produced long title can produce disproportionate work. Reopen this stage for a focused TDD regression and move whitespace removal before suffix matching; retain all semantic boundary tests. A generous bounded-time regression must fail on the old ordering, then pass along with a new internally spaced Chinese page-suffix case. This is not a promise of real-phone speed and is not an additional product feature. Re-run independent verification and both reviews before closing the checklist again.
