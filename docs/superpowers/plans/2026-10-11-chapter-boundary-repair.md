@@ -12,7 +12,7 @@
 
 ## Overall repair checklist
 
-- [ ] Correct network chapter boundaries (this plan).
+- [x] Correct network chapter boundaries (this plan).
 - [ ] Distinguish legacy mixed content and preserve old positions/files during repair.
 - [ ] Implement bounded continuous reading in both modes, actual-visible-chapter progress and Unicode character-count display.
 - [ ] Keep upcoming two-chapter caching automatic, reuse in-flight requests and validate request-count performance.
@@ -35,7 +35,7 @@ The downstream stages have separate focused implementation plans once their inte
 - Test: `app/src/test/java/com/novelradar/app/data/repository/DefaultChapterRepositoryTest.kt` and focused HTTP/fetcher integration fixture.
 - Update only existing test lambdas affected by the fetch signature; no unrelated app/test refactor.
 
-- [ ] **Step 1: Write and observe the behavioral RED**
+- [x] **Step 1: Write and observe the behavioral RED**
 
 Add the following regression inside the existing `SourceEngineTest` (its `withServer`, `routing`, `html`, `rule` and `engine` helpers already exist):
 
@@ -69,7 +69,7 @@ Run this existing-API test first; expect an assertion failure because it current
 6. Redirect to a different known catalog chapter is rejected before appending; loops and bounded legitimate pagination still work.
 7. HTTP policy, byte bounds, cancellation and source/catalog ownership remain intact.
 
-- [ ] **Step 2: Add the minimal focused types and parser link data**
+- [x] **Step 2: Add the minimal focused types and parser link data**
 
 The context and guard API are deliberately small:
 
@@ -124,7 +124,7 @@ data class ChapterPage(
 
 The parser captures `node.text()` from the same selected pagination node while preserving existing selector/script/URL behavior. This is not permission to parse another link or bypass unsafe-rule errors.
 
-- [ ] **Step 3: Apply guards to the actual engine and dependency graph**
+- [x] **Step 3: Apply guards to the actual engine and dependency graph**
 
 Add a defaulted context to the existing engine API, preserving its four positional arguments:
 
@@ -215,7 +215,7 @@ RuleBasedChapterContentFetcher(
 
 Test this actual rule-fetcher/catalog-context path, not merely a mock accepting the new parameter. The empty default preserves standalone fixture convenience but cannot be mistaken for evidence that the production graph supplies the catalog. Do not change repository cache/storage/leases, database schema, worker, identities, icon, or reader UI in this stage.
 
-- [ ] **Step 4: Verify, self-review and commit explicit files**
+- [x] **Step 4: Verify, self-review and commit explicit files**
 
 Replace the old twenty-*different*-chapter sample with twenty pages of one genuinely named chapter, then preserve its exact twenty-page cap assertion. Add the separate cross-chapter regression above; do not simply relax old tests to pass. Check legitimate multi-page contents remain complete, including page separators and exact aggregate byte boundaries.
 
@@ -227,3 +227,5 @@ git diff --check
 ```
 
 Record actual XML test/suite/failure/error/skip counts and all lint warnings. Explicitly stage only this stage's app/test files, commit `fix: keep chapter pagination inside catalog boundaries`, and release writer/Gradle ownership. Root independently verifies, then separate specification and quality reviewers inspect the actual cumulative stage diff. Do not start the next implementation stage with unresolved review issues. Do not copy a new stable APK yet: continuous reader/progress and legacy-cache stages remain pending.
+
+Completion evidence (2026-10-11): application commit `1275491595a75500a622f428a230a9becbb00a82` contains exactly the nine authorized files. Root directly inspected the original cross-chapter RED (1 test/1 failure), engine RED (37/8), fragment-only duplicate RED (1/1), actual production graph/seam and the real fetcher→HTTP regression. The recorded parser/helper GREEN was 12 tests/2 suites; engine GREEN 50/3; final focused GREEN 75/4, all zero failures/errors/skips. Independent full milestone verification exited 0. Root additionally forced a unit rerun: all 26 tasks executed in 1m 7s, producing 421 tests/43 suites with zero failures/errors/skips. SARIF has seven existing warnings and zero errors. Independent specification and code-quality reviews both passed without outstanding issues. The fragment-only regression led to request-scoped network URL canonicalization in the chapter loop; stored chapter URLs/IDs are unchanged. No reader/cache/schema/download/resource logic or stable deliverable APK changed in this stage. The next non-destructive content/progress upgrade is planned in `2026-10-11-content-provenance-upgrade.md`; continuous reading, character display and prefetch lifecycle remain incomplete.
