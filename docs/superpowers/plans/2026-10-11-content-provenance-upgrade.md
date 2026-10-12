@@ -119,7 +119,7 @@ Do not swallow CancellationException or rewrite current-format rows into legacy.
 
 Start from an old-format nonzero bookmark whose offset points into a mixed body; repair returns a smaller verified body. Assert the original persisted location is still intact after load, scroll callbacks, stop, close, rotation and failed new-chapter loading. A verified explicit chapter selection or explicit position confirmation may replace it; background caching and retry alone may not. Test legacy content with no network remains temporarily viewable with a warning, never silently marked correct. An already current-format saved position within the body restores unchanged.
 
-The existing `ReaderViewModelTest.restoresProgressOnlyForRequestedSourceAndClampsOffset` accepts automatic clamping of an out-of-range saved location. Replace that obsolete expectation with a recovery-gate assertion retaining the original persisted offset; keep separate coverage for valid CURRENT positions and other-source records. This is an intentional correction of a test that currently codifies unsafe behavior, not permission to weaken lifecycle or source ownership checks.
+The existing `ReaderViewModelTest.restoresProgressOnlyForRequestedSourceAndClampsOffset` accepts automatic clamping of an out-of-range saved location. Replace that obsolete expectation with a recovery-gate assertion retaining the original persisted offset; keep separate coverage for valid CURRENT positions and other-source records. This is an intentional correction of a test that currently codifies unsafe behavior, not permission to weaken lifecycle or source ownership checks. Also cover a CURRENT saved chapter absent from the refreshed catalog: falling back to the first body cannot silently replace that persisted chapter. An explicitly requested entry absent from the catalog must remain pending with a selection/retry action, not be consumed as a successful first-chapter entry.
 
 - [ ] **Step 2: Add a retained recovery gate, not a second progress store**
 
@@ -130,6 +130,9 @@ fun needsPositionReview(
     saved: ReadingLocation?, loaded: LoadedChapter, explicitlySelected: Boolean,
 ): Boolean = !loaded.boundaryVerified ||
     (!explicitlySelected && saved != null && (
+        saved.bookId != loaded.chapter.bookId ||
+        saved.sourceId != loaded.chapter.sourceId ||
+        saved.chapterId != loaded.chapter.chapterId ||
         saved.contentFormatVersion != ChapterContentFormat.CURRENT ||
         saved.offset !in 0..loaded.content.length
     ))
