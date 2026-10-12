@@ -125,6 +125,8 @@ The real HTTP regression fetches only the first chapter despite a known next-cha
 - Modify: `app/src/main/java/com/novelradar/app/app/NovelRadarApp.kt` only as needed to preserve the explicit entry/recovery intent across recreation.
 - Test: existing ReaderViewModel/ReaderScreen tests plus legacy-position integration tests.
 
+Approved focused test files: `app/src/test/java/com/novelradar/app/feature/reader/ReadingPositionReviewTest.kt` for the pure predicate matrix, and `ReaderPositionRepairIntegrationTest.kt` in the same package for actual AtomicChapterFileStore/DefaultChapterRepository/MockWebServer-to-ViewModel repair. The predicate remains in the existing `ReaderUiState.kt`; no extra production store or helper file is required. The explicit confirmation API is `suspend fun confirmPosition(): Boolean`, routed by an `onConfirmPosition` callback through the existing serialized exact-save path.
+
 - [ ] **Step 1: Observe the false-clamping/write regression**
 
 Start from an old-format nonzero bookmark whose offset points into a mixed body; repair returns a smaller verified body. Assert the original persisted location is still intact after load, scroll callbacks, stop, close, rotation and failed new-chapter loading. A verified explicit chapter selection or explicit position confirmation may replace it; background caching and retry alone may not. Test legacy content with no network remains temporarily viewable with a warning, never silently marked correct. An already current-format saved position within the body restores unchanged.
