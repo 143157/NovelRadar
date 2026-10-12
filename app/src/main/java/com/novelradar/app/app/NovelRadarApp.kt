@@ -322,8 +322,8 @@ private fun ReaderRoute(bookId: String, sourceId: String, chapterId: String?, se
         viewModelStoreOwner = owner, factory = factory)
     val state by model.uiState.collectAsStateWithLifecycle()
     // A retained model may finish loading between the old and new compositions.
-    LaunchedEffect(model, state.content != null) {
-        if (state.content != null) onInitialChapterLoaded()
+    LaunchedEffect(model, state.initialEntryCompleted) {
+        if (state.initialEntryCompleted) onInitialChapterLoaded()
     }
     val scope = rememberCoroutineScope()
     var exiting by remember { mutableStateOf(false) }
@@ -350,5 +350,6 @@ private fun ReaderRoute(bookId: String, sourceId: String, chapterId: String?, se
         chapterKey?.let { model.onPositionChanged(it, version, offset) }
     }, onPrevious = model::previousChapter, onNext = model::nextChapter,
         onRetry = model::retry, onChapterSelected = model::selectChapter,
+        onConfirmPosition = { scope.launch { model.confirmPosition() } },
         onPreferencesChanged = model::updatePreferences, modifier = modifier)
 }

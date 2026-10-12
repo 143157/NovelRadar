@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModelStoreOwner
 import com.novelradar.app.domain.model.Book
 import com.novelradar.app.domain.model.BookSource
 import com.novelradar.app.domain.model.Chapter
+import com.novelradar.app.domain.model.ChapterContentFormat
 import com.novelradar.app.domain.model.ReaderPreferences
 import com.novelradar.app.domain.model.ReaderTheme
 import com.novelradar.app.domain.model.SourceFailure
@@ -48,18 +49,490 @@ class ReaderViewModelTest {
         assertThat(fixture.chapters.prefetches).containsExactly(0 to 2)
     }
 
-    @Test fun restoresProgressOnlyForRequestedSourceAndClampsOffset() = runTest {
+    @Test fun outOfRangeCurrentPositionIsNotClampedOrOverwritten() = runTest {
         val fixture = Fixture()
-        fixture.progress.initial = location("c1", 1, 999)
+        val original = location("c1", 1, 999)
+        fixture.progress.initial = original
         val vm = fixture.create()
         advanceUntilIdle()
         assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c1")
-        assertThat(vm.uiState.value.offset).isEqualTo(100)
+        assertThat(vm.uiState.value.offset).isEqualTo(0)
+        assertThat(fixture.progress.initial).isEqualTo(original)
+        assertThat(fixture.progress.exact).isEmpty()
+    }
+
+    @Test fun validCurrentPositionRestoresAndOtherSourceIsIgnored() = runTest {
+        val fixture = Fixture()
+        fixture.progress.initial = location("c1", 1, 55)
+        val vm = fixture.create()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.offset).isEqualTo(55)
         val other = Fixture().also { it.progress.initial = location("c1", 1, 55).copy(sourceId = "b") }
         val otherVm = other.create()
         advanceUntilIdle()
         assertThat(otherVm.uiState.value.content?.chapter?.chapterId).isEqualTo("c0")
         assertThat(otherVm.uiState.value.offset).isEqualTo(0)
+        assertThat(otherVm.uiState.value.positionNeedsReview).isTrue()
+        assertThat(otherVm.uiState.value.originalReadingLocation?.sourceId).isEqualTo("b")
+        assertThat(other.progress.initial?.sourceId).isEqualTo("b")
+    }
+
+    @Test fun repairedLegacyPositionSurvivesScrollLayoutStopRetryPrefetchAndClose() = runTest {
+        val fixture = Fixture()
+        val original = location("c1", 1, 88).copy(contentFormatVersion = ChapterContentFormat.LEGACY)
+        fixture.progress.initial = original
+        fixture.chapters.body = "修复后的短正文"
+        val vm = fixture.create()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.offset).isEqualTo(0)
+        vm.onPositionChanged(4)
+        vm.updatePreferences { it.copy(fontSizeSp = 28f) }
+        vm.onPositionChanged("c1", vm.uiState.value.positionVersion, 6)
+        vm.saveOnStop()
+        vm.retry()
+        advanceUntilIdle()
+        assertThat(vm.close()).isTrue()
+        assertThat(fixture.progress.initial).isEqualTo(original)
+        assertThat(fixture.progress.exact).isEmpty()
+        assertThat(fixture.progress.changes).isEmpty()
+        assertThat(fixture.chapters.prefetches).isNotEmpty()
+    }
+
+    @Test fun temporaryLegacyBodyIsViewableWithoutAutomaticWrites() = runTest {
+        val fixture = Fixture()
+        val original = location("c1", 1, 55).copy(contentFormatVersion = ChapterContentFormat.LEGACY)
+        fixture.progress.initial = original
+        fixture.chapters.verified = false
+        val vm = fixture.create()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.offset).isEqualTo(55)
+        vm.onPositionChanged(65)
+        vm.saveOnStop()
+        advanceUntilIdle()
+        assertThat(vm.close()).isTrue()
+        assertThat(fixture.progress.initial).isEqualTo(original)
+        assertThat(fixture.progress.exact).isEmpty()
+        assertThat(fixture.progress.changes).isEmpty()
+    }
+
+    @Test fun missingSavedChapterFallbackCannotReplaceOriginalPosition() = runTest {
+        val fixture = Fixture()
+        val original = location("removed", 8, 42)
+        fixture.progress.initial = original
+        val vm = fixture.create()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c0")
+        vm.onPositionChanged(18)
+        assertThat(vm.close()).isTrue()
+        assertThat(fixture.progress.initial).isEqualTo(original)
+    }
+
+    @Test fun missingExplicitEntryIsNotConsumedByFallbackChapter() = runTest {
+        val fixture = Fixture()
+        var consumed = 0
+        val vm = fixture.create("missing") { consumed++ }
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.content).isNull()
+        assertThat(consumed).isEqualTo(0)
+        assertThat(fixture.progress.exact).isEmpty()
+        vm.retry()
+        advanceUntilIdle()
+        assertThat(consumed).isEqualTo(0)
+    }
+
+    @Test fun legacyAndUnknownMarkersNeedReviewEvenWhenOffsetFitsVerifiedBody() = runTest {
+        for (marker in listOf(ChapterContentFormat.LEGACY, 99)) {
+            val fixture = Fixture()
+            val original = location("c1", 1, 55).copy(contentFormatVersion = marker)
+            fixture.progress.initial = original
+            val vm = fixture.create()
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.positionNeedsReview).isTrue()
+            assertThat(vm.uiState.value.offset).isEqualTo(0)
+            assertThat(vm.uiState.value.originalReadingLocation).isEqualTo(original)
+            assertThat(vm.uiState.value.originalChapterTitle).isEqualTo("第2章")
+            assertThat(fixture.progress.initial).isEqualTo(original)
+        }
+    }
+
+    @Test fun failedChoiceKeepsGateAndRetryConfirmsActualRequestedChapter() = runTest {
+        val fixture = Fixture()
+        val original = location("c1", 1, 80).copy(contentFormatVersion = ChapterContentFormat.LEGACY)
+        fixture.progress.initial = original
+        val vm = fixture.create()
+        advanceUntilIdle()
+        fixture.chapters.failed = "c2"
+        vm.nextChapter()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.positionNeedsReview).isTrue()
+        assertThat(fixture.progress.initial).isEqualTo(original)
+        assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c1")
+        fixture.chapters.failed = null
+        vm.retry()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c2")
+        assertThat(vm.uiState.value.offset).isEqualTo(0)
+        assertThat(vm.uiState.value.positionNeedsReview).isFalse()
+        assertThat(fixture.progress.initial?.chapterId).isEqualTo("c2")
+    }
+
+    @Test fun explicitUnverifiedEntryStaysPendingUntilTrustedRetryHasSaved() = runTest {
+        val fixture = Fixture()
+        fixture.chapters.verified = false
+        val original = location("c2", 2, 55)
+        fixture.progress.initial = original
+        var consumed = 0
+        val vm = fixture.create("c1") { consumed++ }
+        advanceUntilIdle()
+        assertThat(consumed).isEqualTo(0)
+        assertThat(vm.uiState.value.initialEntryCompleted).isFalse()
+        assertThat(vm.confirmPosition()).isFalse()
+        assertThat(fixture.progress.initial).isEqualTo(original)
+        fixture.chapters.verified = true
+        fixture.progress.failSave = true
+        vm.retry()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.positionNeedsReview).isTrue()
+        assertThat(consumed).isEqualTo(0)
+        fixture.progress.failSave = false
+        vm.retry()
+        advanceUntilIdle()
+        assertThat(consumed).isEqualTo(1)
+        assertThat(vm.uiState.value.initialEntryCompleted).isTrue()
+        assertThat(vm.uiState.value.positionNeedsReview).isFalse()
+        assertThat(fixture.progress.initial?.chapterId).isEqualTo("c1")
+        assertThat(fixture.progress.initial?.offset).isEqualTo(0)
+    }
+
+    @Test fun confirmFailureKeepsOriginalAndLaterConfirmationSavesBoundedVisibleOffset() = runTest {
+        val fixture = Fixture()
+        val original = location("c1", 1, 88).copy(contentFormatVersion = ChapterContentFormat.LEGACY)
+        fixture.progress.initial = original
+        val vm = fixture.create()
+        advanceUntilIdle()
+        vm.onPositionChanged(44)
+        fixture.progress.failSave = true
+        assertThat(vm.confirmPosition()).isFalse()
+        assertThat(vm.uiState.value.positionNeedsReview).isTrue()
+        assertThat(vm.uiState.value.originalReadingLocation).isEqualTo(original)
+        assertThat(vm.uiState.value.notice).isEqualTo("阅读位置确认失败，请重试确认")
+        assertThat(fixture.progress.initial).isEqualTo(original)
+        vm.saveOnStop()
+        advanceUntilIdle()
+        fixture.progress.failSave = false
+        vm.onPositionChanged(999)
+        assertThat(vm.confirmPosition()).isTrue()
+        assertThat(vm.uiState.value.positionNeedsReview).isFalse()
+        assertThat(vm.uiState.value.originalReadingLocation).isNull()
+        assertThat(fixture.progress.initial?.offset).isEqualTo(100)
+        assertThat(fixture.progress.initial?.contentFormatVersion).isEqualTo(ChapterContentFormat.CURRENT)
+        assertThat(vm.uiState.value.notice).isNull()
+    }
+
+    @Test fun pendingConfirmationKeepsGateUntilSerializedWriteSucceeds() = runTest {
+        val fixture = Fixture()
+        val original = location("c1", 1, 88).copy(contentFormatVersion = ChapterContentFormat.LEGACY)
+        fixture.progress.initial = original
+        val vm = fixture.create()
+        advanceUntilIdle()
+        vm.onPositionChanged(44)
+        val gate = CompletableDeferred<Unit>()
+        fixture.progress.saveGate = gate
+        var confirmed = false
+        backgroundScope.launch { confirmed = vm.confirmPosition() }
+        runCurrent()
+        assertThat(vm.uiState.value.positionNeedsReview).isTrue()
+        assertThat(fixture.progress.initial).isEqualTo(original)
+        vm.onPositionChanged(77)
+        assertThat(fixture.progress.changes).isEmpty()
+        gate.complete(Unit)
+        advanceUntilIdle()
+        runCurrent()
+        assertThat(confirmed).isTrue()
+        assertThat(vm.uiState.value.positionNeedsReview).isFalse()
+        assertThat(fixture.progress.initial?.offset).isEqualTo(44)
+        assertThat(fixture.progress.changes.map { it.offset }).contains(77)
+        vm.saveOnStop()
+        advanceUntilIdle()
+        assertThat(fixture.progress.initial?.offset).isEqualTo(77)
+    }
+
+    @Test fun unverifiedLaterChoiceProtectsLatestPersistedPosition() = runTest {
+        val fixture = Fixture()
+        fixture.progress.initial = location("c0", 0, 5)
+        val vm = fixture.create()
+        advanceUntilIdle()
+        vm.onPositionChanged(42)
+        fixture.chapters.verified = false
+        vm.nextChapter()
+        advanceUntilIdle()
+        val latest = fixture.progress.initial
+        assertThat(latest?.chapterId).isEqualTo("c0")
+        assertThat(latest?.offset).isEqualTo(42)
+        assertThat(vm.uiState.value.originalReadingLocation).isEqualTo(latest)
+        assertThat(vm.uiState.value.positionNeedsReview).isTrue()
+        vm.onPositionChanged(70)
+        vm.saveOnStop()
+        advanceUntilIdle()
+        assertThat(vm.close()).isTrue()
+        assertThat(fixture.progress.initial).isEqualTo(latest)
+    }
+
+    @Test fun reviewSurvivesRetainedStoreLayoutAndStaleCallbacks() = runTest {
+        val fixture = Fixture()
+        val original = location("c1", 1, 88).copy(contentFormatVersion = ChapterContentFormat.LEGACY)
+        fixture.progress.initial = original
+        val session = ReaderSessionViewModel()
+        val vm = fixture.create()
+        session.viewModelStore.put("reader", vm)
+        advanceUntilIdle()
+        val oldVersion = vm.uiState.value.positionVersion
+        vm.updatePreferences { it.copy(fontSizeSp = 28f) }
+        advanceUntilIdle()
+        val retained = session.viewModelStore["reader"] as ReaderViewModel
+        assertThat(retained).isSameInstanceAs(vm)
+        retained.onPositionChanged("c1", oldVersion, 80)
+        assertThat(retained.uiState.value.offset).isEqualTo(0)
+        retained.onPositionChanged("c1", retained.uiState.value.positionVersion, 60)
+        retained.saveOnStop()
+        advanceUntilIdle()
+        assertThat(retained.uiState.value.positionNeedsReview).isTrue()
+        assertThat(retained.uiState.value.originalReadingLocation).isEqualTo(original)
+        assertThat(fixture.progress.initial).isEqualTo(original)
+        session.viewModelStore.clear()
+    }
+
+    @Test fun invalidExplicitEntryCanRetryRefreshedCatalogWithoutLosingIntent() = runTest {
+        val fixture = Fixture()
+        fixture.catalog.list = fixture.catalog.list.filterNot { it.chapterId == "c1" }
+        var consumed = 0
+        val vm = fixture.create("c1") { consumed++ }
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.content).isNull()
+        fixture.catalog.list = fixture.catalog.list + Chapter("book", "a", "c1", 1, "第2章")
+        vm.retry()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c1")
+        assertThat(consumed).isEqualTo(1)
+        assertThat(vm.uiState.value.offset).isEqualTo(0)
+    }
+
+    @Test fun loadedIdentityMustMatchBookSourceAndActualRequestedChapter() = runTest {
+        for (wrong in listOf(Chapter("other", "a", "c1", 1, "错书"),
+            Chapter("book", "b", "c1", 1, "错源"), Chapter("book", "a", "c0", 0, "错章"))) {
+            val fixture = Fixture()
+            val original = location("c2", 2, 55)
+            fixture.progress.initial = original
+            fixture.chapters.returnedChapter = wrong
+            var consumed = 0
+            val vm = fixture.create("c1") { consumed++ }
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.content).isNull()
+            assertThat(vm.uiState.value.error).isNotNull()
+            assertThat(consumed).isEqualTo(0)
+            assertThat(fixture.progress.initial).isEqualTo(original)
+            assertThat(fixture.progress.exact).isEmpty()
+        }
+    }
+
+    @Test fun recoveryWarningSurvivesSettingsNoticeAndCloseDoesNotRequireSave() = runTest {
+        val fixture = Fixture()
+        val original = location("c1", 1, 55).copy(contentFormatVersion = ChapterContentFormat.LEGACY)
+        fixture.progress.initial = original
+        val vm = fixture.create()
+        advanceUntilIdle()
+        fixture.settings.failUpdate = true
+        fixture.progress.failSave = true
+        vm.updatePreferences { it.copy(fontSizeSp = 28f) }
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.notice).isEqualTo("设置保存失败，请重试")
+        assertThat(vm.uiState.value.positionNeedsReview).isTrue()
+        assertThat(vm.close()).isTrue()
+        assertThat(fixture.progress.initial).isEqualTo(original)
+    }
+
+    @Test fun passiveRetryAfterLegacyConfirmationKeepsConfirmedPosition() = runTest {
+        val fixture = Fixture()
+        fixture.progress.initial = location("c1", 1, 88).copy(contentFormatVersion = ChapterContentFormat.LEGACY)
+        fixture.chapters.body = "修复后的短正文"
+        val vm = fixture.create()
+        advanceUntilIdle()
+        vm.onPositionChanged(4)
+        assertThat(vm.confirmPosition()).isTrue()
+        vm.retry()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.offset).isEqualTo(4)
+        assertThat(fixture.progress.initial?.offset).isEqualTo(4)
+    }
+
+    @Test fun passiveCurrentRetryKeepsLatestVisiblePosition() = runTest {
+        val fixture = Fixture()
+        fixture.progress.initial = location("c1", 1, 8)
+        val vm = fixture.create()
+        advanceUntilIdle()
+        vm.onPositionChanged(42)
+        vm.retry()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.offset).isEqualTo(42)
+        assertThat(fixture.progress.initial?.offset).isEqualTo(42)
+    }
+
+    @Test fun layoutChangeDuringConfirmationDoesNotKeepObsoleteRecoveryAfterSuccessfulWrite() = runTest {
+        val fixture = Fixture()
+        fixture.progress.initial = location("c1", 1, 88).copy(contentFormatVersion = ChapterContentFormat.LEGACY)
+        val vm = fixture.create()
+        advanceUntilIdle()
+        vm.onPositionChanged(44)
+        val gate = CompletableDeferred<Unit>()
+        fixture.progress.saveGate = gate
+        backgroundScope.launch { vm.confirmPosition() }
+        runCurrent()
+        vm.updatePreferences { it.copy(fontSizeSp = 28f) }
+        runCurrent()
+        assertThat(vm.uiState.value.positionNeedsReview).isTrue()
+        gate.complete(Unit)
+        advanceUntilIdle()
+        runCurrent()
+        assertThat(vm.uiState.value.positionNeedsReview).isFalse()
+        assertThat(vm.uiState.value.originalReadingLocation).isNull()
+        assertThat(fixture.progress.initial?.offset).isEqualTo(44)
+    }
+
+    @Test fun onlyMatchingLegacyMarkerCanUseTemporaryOldBodyOffset() = runTest {
+        for (marker in listOf(ChapterContentFormat.CURRENT, 99)) {
+            val fixture = Fixture()
+            val original = location("c1", 1, 55).copy(contentFormatVersion = marker)
+            fixture.progress.initial = original
+            fixture.chapters.verified = false
+            val vm = fixture.create()
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.offset).isEqualTo(0)
+            assertThat(vm.uiState.value.positionNeedsReview).isTrue()
+            assertThat(fixture.progress.initial).isEqualTo(original)
+        }
+    }
+
+    @Test fun invalidLegacyOffsetsUseSafeViewAnchorAndPreserveRawOffset() = runTest {
+        for (offset in listOf(-1, 999)) {
+            val fixture = Fixture()
+            val original = location("c1", 1, offset).copy(contentFormatVersion = ChapterContentFormat.LEGACY)
+            fixture.progress.initial = original
+            fixture.chapters.verified = false
+            val vm = fixture.create()
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.offset).isEqualTo(0)
+            assertThat(vm.uiState.value.originalReadingLocation).isEqualTo(original)
+            assertThat(vm.close()).isTrue()
+            assertThat(fixture.progress.initial).isEqualTo(original)
+        }
+    }
+
+    @Test fun currentOffsetsAtBothUtf16BoundsRestoreWithoutReview() = runTest {
+        for (offset in listOf(0, 100)) {
+            val fixture = Fixture()
+            fixture.progress.initial = location("c1", 1, offset)
+            val vm = fixture.create()
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.offset).isEqualTo(offset)
+            assertThat(vm.uiState.value.positionNeedsReview).isFalse()
+        }
+    }
+
+    @Test fun untrustedExplicitEntryRecreationRetainsPendingRequestedChapter() = runTest {
+        val fixture = Fixture()
+        fixture.progress.initial = location("c2", 2, 55)
+        fixture.chapters.verified = false
+        var pending: String? = "c1"
+        val owner = ViewModelStore()
+        val first = fixture.create(pending) { pending = null }
+        owner.put("reader", first)
+        advanceUntilIdle()
+        assertThat(pending).isEqualTo("c1")
+        assertThat(fixture.progress.initial?.chapterId).isEqualTo("c2")
+        owner.clear()
+        fixture.chapters.verified = true
+        val recreated = fixture.create(pending) { pending = null }
+        advanceUntilIdle()
+        assertThat(recreated.uiState.value.content?.chapter?.chapterId).isEqualTo("c1")
+        assertThat(recreated.uiState.value.offset).isEqualTo(0)
+        assertThat(pending).isNull()
+    }
+
+    @Test fun savedBookMismatchIsReviewedAndCannotForgeAProgressWrite() = runTest {
+        val fixture = Fixture()
+        val original = location("c1", 1, 55).copy(bookId = "other")
+        fixture.progress.initial = original
+        val vm = fixture.create()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.positionNeedsReview).isTrue()
+        assertThat(vm.uiState.value.offset).isEqualTo(0)
+        vm.onPositionChanged(42)
+        assertThat(vm.close()).isTrue()
+        assertThat(fixture.progress.initial).isEqualTo(original)
+    }
+
+    @Test fun retainedConfirmationFinishesWriteWhenRotationCancelsItsUiCaller() = runTest {
+        val fixture = Fixture()
+        val original = location("c1", 1, 88).copy(contentFormatVersion = ChapterContentFormat.LEGACY)
+        fixture.progress.initial = original
+        val vm = fixture.create()
+        val retained = ReaderSessionViewModel()
+        retained.viewModelStore.put("reader", vm)
+        advanceUntilIdle()
+        vm.onPositionChanged(44)
+        val gate = CompletableDeferred<Unit>()
+        fixture.progress.saveGate = gate
+        val caller = backgroundScope.launch { vm.confirmPosition() }
+        runCurrent()
+        assertThat(vm.uiState.value.positionNeedsReview).isTrue()
+        caller.cancel()
+        gate.complete(Unit)
+        advanceUntilIdle()
+        runCurrent()
+        val restored = retained.viewModelStore["reader"] as ReaderViewModel
+        assertThat(restored).isSameInstanceAs(vm)
+        assertThat(restored.uiState.value.positionNeedsReview).isFalse()
+        assertThat(restored.uiState.value.originalReadingLocation).isNull()
+        assertThat(fixture.progress.initial?.offset).isEqualTo(44)
+        assertThat(fixture.progress.initial?.contentFormatVersion).isEqualTo(ChapterContentFormat.CURRENT)
+        retained.viewModelStore.clear()
+    }
+
+    @Test fun legacyInitialLoadFailureStillExposesProtectedOriginalPosition() = runTest {
+        val fixture = Fixture()
+        val original = location("c1", 1, 88).copy(contentFormatVersion = ChapterContentFormat.LEGACY)
+        fixture.progress.initial = original
+        fixture.chapters.failed = "c1"
+        val vm = fixture.create()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.content).isNull()
+        assertThat(vm.uiState.value.positionNeedsReview).isTrue()
+        assertThat(vm.uiState.value.originalReadingLocation).isEqualTo(original)
+        assertThat(vm.uiState.value.originalChapterTitle).isEqualTo("第2章")
+        assertThat(vm.close()).isTrue()
+        assertThat(fixture.progress.initial).isEqualTo(original)
+    }
+
+    @Test fun anotherSourceRecordRemainsProtectedAndVisibleForUnverifiedCurrentBody() = runTest {
+        val fixture = Fixture()
+        val original = location("c2", 2, 55).copy(sourceId = "b", updatedAtEpochMillis = 200L)
+        fixture.progress.initial = original
+        fixture.progress.preferredSource = "b"
+        fixture.chapters.verified = false
+        val vm = fixture.create()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.content?.chapter?.sourceId).isEqualTo("a")
+        assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c0")
+        assertThat(vm.uiState.value.offset).isEqualTo(0)
+        assertThat(vm.uiState.value.positionNeedsReview).isTrue()
+        assertThat(vm.uiState.value.originalReadingLocation).isEqualTo(original)
+        assertThat(vm.uiState.value.originalChapterTitle).isNull()
+        vm.onPositionChanged(42)
+        vm.saveOnStop()
+        advanceUntilIdle()
+        assertThat(vm.close()).isTrue()
+        assertThat(fixture.progress.initial).isEqualTo(original)
+        assertThat(fixture.progress.preferredSource).isEqualTo("b")
     }
 
     @Test fun explicitCatalogSelectionStartsAtChapterBeginning() = runTest {
@@ -526,7 +999,7 @@ class ReaderViewModelTest {
 
     private class Fixture {
         val catalog = FakeCatalog()
-        val chapters = FakeChapters(catalog.list)
+        val chapters = FakeChapters { catalog.list }
         val settings = FakeSettings()
         val progress = FakeProgress()
         fun create(chapterId: String? = null, onInitialChapterLoaded: () -> Unit = {}) = ReaderViewModel("book", "a", chapterId,
@@ -534,7 +1007,7 @@ class ReaderViewModelTest {
     }
 
     private class FakeCatalog : CatalogRepository {
-        val list = (0..2).map { Chapter("book", "a", "c$it", it, "第${it + 1}章") }
+        var list = (0..2).map { Chapter("book", "a", "c$it", it, "第${it + 1}章") }
         override suspend fun book(bookId: String) = Book("book", "x", "星河旅人", "叶子")
         override suspend fun sourceNames() = mapOf("a" to "书源甲")
         override fun sources(bookId: String): Flow<List<BookSource>> = MutableStateFlow(emptyList())
@@ -542,17 +1015,20 @@ class ReaderViewModelTest {
         override suspend fun catalog(bookId: String, sourceId: String, forceRefresh: Boolean) = CatalogResult(list, true)
     }
 
-    private class FakeChapters(val catalog: List<Chapter>) : ChapterRepository {
+    private class FakeChapters(val catalog: () -> List<Chapter>) : ChapterRepository {
         val loads = mutableListOf<String>()
         val prefetches = mutableListOf<Pair<Int, Int>>()
         var failed: String? = null
         var origin = ChapterOrigin.Cached
+        var body = "正文".repeat(50)
+        var verified = true
+        var returnedChapter: Chapter? = null
         var gate: CompletableDeferred<Unit>? = null
         override suspend fun loadChapter(bookId: String, sourceId: String, chapterId: String): SourceResult<LoadedChapter> {
             loads += chapterId
             gate?.await()
             return if (failed == chapterId) SourceResult.Failure(SourceFailure.Timeout)
-            else SourceResult.Success(LoadedChapter(catalog.first { it.chapterId == chapterId }, "正文".repeat(50), origin))
+            else SourceResult.Success(LoadedChapter(returnedChapter ?: catalog().first { it.chapterId == chapterId }, body, origin, verified))
         }
         override suspend fun prefetchNext(bookId: String, sourceId: String, chapterIndex: Int, count: Int): Int {
             prefetches += chapterIndex to count

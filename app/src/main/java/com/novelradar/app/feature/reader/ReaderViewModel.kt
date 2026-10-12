@@ -3,6 +3,7 @@ package com.novelradar.app.feature.reader
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.novelradar.app.domain.model.ReaderPreferences
+import com.novelradar.app.domain.model.ChapterContentFormat
 import com.novelradar.app.domain.model.SourceFailure
 import com.novelradar.app.domain.model.SourceResult
 import com.novelradar.app.domain.repository.CatalogRepository
@@ -53,6 +54,10 @@ class ReaderViewModel(
     private var closed = false
     private var retryChapterId: String? = null
     private var retryOffset = 0
+    private var retryExplicitlySelected = false
+    // Session-only protection of the existing progress row; never a second persistent bookmark.
+    private var persistedLocation: ReadingLocation? = null
+    private var pendingChoice = initialChapterId
     private var lastEventTime = Long.MIN_VALUE
     private var initialEntryPending = initialChapterId != null
 
@@ -80,19 +85,38 @@ class ReaderViewModel(
             val book = catalog.book(bookId)
             val names = catalog.sourceNames()
             val snapshot = catalog.catalog(bookId, sourceId)
-            val saved = progress.progress(bookId).first()?.takeIf { it.sourceId == sourceId }
+            val saved = progress.progress(bookId).first()
+            val restore = saved?.takeIf { it.bookId == bookId && it.sourceId == sourceId }
+            persistedLocation = saved
             lastEventTime = maxOf(lastEventTime, saved?.updatedAtEpochMillis ?: Long.MIN_VALUE)
-            val ordered = snapshot.chapters.sortedBy { it.chapterIndex }
-            val target = ordered.firstOrNull { it.chapterId == initialChapterId }
-                ?: if (initialChapterId == null) ordered.firstOrNull { it.chapterId == saved?.chapterId } else null
+            val ordered = snapshot.chapters.filter { it.bookId == bookId && it.sourceId == sourceId }.sortedBy { it.chapterIndex }
+            val requested = pendingChoice
+            val target = ordered.firstOrNull { it.chapterId == requested }
+                ?: if (requested == null) ordered.firstOrNull { it.chapterId == restore?.chapterId } else null
             val chapter = target ?: ordered.firstOrNull()
-            mutableState.update { it.copy(book = book, sourceName = names[sourceId] ?: sourceId, chapters = ordered) }
+            val recovery = mutableState.value.positionNeedsReview || saved?.let {
+                it.bookId != bookId || it.sourceId != sourceId || it.contentFormatVersion != ChapterContentFormat.CURRENT ||
+                    ordered.none { chapter -> chapter.chapterId == it.chapterId }
+            } == true
+            mutableState.update { it.copy(book = book, sourceName = names[sourceId] ?: sourceId, chapters = ordered,
+                positionNeedsReview = recovery, originalReadingLocation = if (recovery) saved else null,
+                originalChapterTitle = if (recovery && saved?.bookId == bookId && saved.sourceId == sourceId)
+                    ordered.firstOrNull { chapter -> chapter.chapterId == saved.chapterId }?.title else null) }
+            if (requested != null && target == null) {
+                retryChapterId = requested
+                retryOffset = 0
+                retryExplicitlySelected = true
+                mutableState.update { it.copy(loading = false, positionNeedsReview = true,
+                    originalReadingLocation = saved, originalChapterTitle = originalTitle(),
+                    error = SourceFailure.Unexpected("所选章节不在当前目录中，请选择章节或重试")) }
+                return
+            }
             if (chapter == null) {
                 mutableState.update { it.copy(loading = false, error = snapshot.warning ?: SourceFailure.Unexpected("目录为空")) }
                 return
             }
-            val offset = if (initialChapterId == null && chapter.chapterId == saved?.chapterId) saved.offset else 0
-            load(chapter.chapterId, offset)
+            val offset = if (requested == null && chapter.chapterId == restore?.chapterId) restore.offset else 0
+            load(chapter.chapterId, offset, explicitlySelected = requested != null)
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { mutableState.update { it.copy(loading = false, error = SourceFailure.Unexpected("无法打开书籍")) } }
     }
@@ -100,11 +124,15 @@ class ReaderViewModel(
     fun selectChapter(chapterId: String) {
         if (closing || closed) return
         if (mutableState.value.chapters.none { it.chapterId == chapterId }) return
+        pendingChoice = chapterId
+        retryChapterId = chapterId
+        retryOffset = 0
+        retryExplicitlySelected = true
         loadJob?.cancel()
         prefetchJob?.cancel()
         loadJob = viewModelScope.launch {
             if (!saveExact()) return@launch
-            load(chapterId, 0)
+            load(chapterId, 0, explicitlySelected = true)
         }
     }
 
@@ -114,34 +142,63 @@ class ReaderViewModel(
     fun retry() {
         if (closing || closed) return
         val target = retryChapterId
+        val explicit = retryExplicitlySelected
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
-            if (target == null) initialize()
-            else if (saveExact()) load(target, retryOffset)
+            if (target == null || mutableState.value.chapters.none { it.chapterId == target }) initialize()
+            else if (saveExact()) {
+                val offset = if (!explicit) persistedLocation?.takeIf {
+                    it.bookId == bookId && it.sourceId == sourceId && it.chapterId == target
+                }?.offset ?: retryOffset
+                    else retryOffset
+                load(target, offset, explicit)
+            }
         }
     }
 
-    private suspend fun load(chapterId: String, offset: Int) {
+    suspend fun confirmPosition(): Boolean = withContext(NonCancellable) {
+        saveMutex.withLock {
+            if (closing || closed || mutableState.value.loading) return@withLock false
+            persistExact(confirm = true)
+        }
+    }
+
+    private suspend fun load(chapterId: String, offset: Int, explicitlySelected: Boolean) {
         retryChapterId = chapterId
         retryOffset = offset
+        retryExplicitlySelected = explicitlySelected
         mutableState.update { it.copy(loading = true, error = null) }
         try {
             when (val result = chapters.loadChapter(bookId, sourceId, chapterId)) {
                 is SourceResult.Failure -> mutableState.update { it.copy(loading = false, error = result.error) }
                 is SourceResult.Success -> {
                     val loaded = result.value
+                    if (loaded.chapter.bookId != bookId || loaded.chapter.sourceId != sourceId ||
+                        loaded.chapter.chapterId != chapterId) {
+                        mutableState.update { it.copy(loading = false, error = SourceFailure.Unexpected("正文与所选章节不符，请重试")) }
+                        return
+                    }
                     // The retained chapter can still scroll while the next chapter is requested.
                     if (!saveExact()) {
                         mutableState.update { it.copy(loading = false) }
                         return
                     }
+                    val review = needsPositionReview(persistedLocation, loaded, explicitlySelected)
+                    val oldBodyOffset = !explicitlySelected && !loaded.boundaryVerified &&
+                        persistedLocation?.let { it.bookId == bookId && it.sourceId == sourceId &&
+                            it.chapterId == chapterId && it.contentFormatVersion == ChapterContentFormat.LEGACY &&
+                            it.offset in 0..loaded.content.length } == true
+                    val viewOffset = if (explicitlySelected || (review && !oldBodyOffset)) 0
+                        else offset.coerceIn(0, loaded.content.length)
                     mutableState.update { it.copy(content = loaded, loading = false, error = null,
-                        offset = offset.coerceIn(0, loaded.content.length), positionVersion = it.positionVersion + 1) }
-                    if (initialEntryPending) {
-                        initialEntryPending = false
-                        onInitialChapterLoaded()
-                    }
-                    saveExact()
+                        offset = viewOffset, positionVersion = it.positionVersion + 1,
+                        positionNeedsReview = review || explicitlySelected,
+                        originalReadingLocation = if (review || explicitlySelected) persistedLocation else null,
+                        originalChapterTitle = if (review || explicitlySelected) originalTitle() else null) }
+                    if (explicitlySelected && loaded.boundaryVerified) {
+                        confirmPosition()
+                    } else saveExact()
+                    currentCoroutineContext().ensureActive()
                     val count = mutableState.value.preferences.prefetchCount.coerceIn(0, 2)
                     prefetchJob?.cancel()
                     if (count > 0) prefetchJob = viewModelScope.launch {
@@ -162,7 +219,7 @@ class ReaderViewModel(
         val bounded = offset.coerceIn(0, content.content.length)
         if (bounded == current.offset) return
         mutableState.update { it.copy(offset = bounded) }
-        positions.tryEmit(location(bounded))
+        if (!current.positionNeedsReview) positions.tryEmit(location(bounded))
     }
 
     fun onPositionChanged(chapterId: String, positionVersion: Int, offset: Int) {
@@ -176,15 +233,37 @@ class ReaderViewModel(
         if (closed) true else persistExact()
     }
 
-    private suspend fun persistExact(): Boolean {
-        if (mutableState.value.content == null) return true
+    private suspend fun persistExact(confirm: Boolean = false): Boolean {
+        val current = mutableState.value
+        val content = current.content ?: return !confirm
+        if (confirm && !content.boundaryVerified) return false
+        if (!confirm && current.positionNeedsReview) return true
         return try {
-            progress.saveExact(location(mutableState.value.offset))
-            mutableState.update { if (it.notice == SAVE_FAILURE_NOTICE) it.copy(notice = null) else it }
+            val saved = location(current.offset.coerceIn(0, content.content.length))
+            progress.saveExact(saved)
+            persistedLocation = saved
+            if (confirm && mutableState.value.content === content) {
+                mutableState.update { it.copy(positionNeedsReview = false, originalReadingLocation = null, originalChapterTitle = null) }
+                // Movement while the exact confirmation was pending becomes eligible only after the gate opens.
+                val visibleOffset = mutableState.value.offset
+                if (!closing && !closed && visibleOffset != saved.offset) positions.tryEmit(location(visibleOffset))
+                if (pendingChoice == content.chapter.chapterId) {
+                    pendingChoice = null
+                    retryExplicitlySelected = false
+                    retryOffset = saved.offset
+                    if (initialEntryPending) {
+                        initialEntryPending = false
+                        mutableState.update { it.copy(initialEntryCompleted = true) }
+                        onInitialChapterLoaded()
+                    }
+                }
+            }
+            mutableState.update { if (it.notice == SAVE_FAILURE_NOTICE || it.notice == POSITION_CONFIRMATION_FAILURE_NOTICE)
+                it.copy(notice = null) else it }
             true
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) {
-            mutableState.update { it.copy(notice = SAVE_FAILURE_NOTICE) }
+            mutableState.update { it.copy(notice = if (confirm) POSITION_CONFIRMATION_FAILURE_NOTICE else SAVE_FAILURE_NOTICE) }
             false
         }
     }
@@ -236,6 +315,10 @@ class ReaderViewModel(
         lastEventTime = maxOf(clock(), if (lastEventTime == Long.MAX_VALUE) Long.MAX_VALUE else lastEventTime + 1)
         return ReadingLocation(bookId, sourceId, chapter.chapterId, chapter.chapterIndex, offset, lastEventTime)
     }
+
+    private fun originalTitle(): String? = mutableState.value.chapters
+        .firstOrNull { persistedLocation?.bookId == bookId && persistedLocation?.sourceId == sourceId &&
+            it.chapterId == persistedLocation?.chapterId }?.title
 
     private fun settingsUnavailable() {
         mutableState.update { it.copy(preferences = it.preferences.copy(prefetchCount = 0),

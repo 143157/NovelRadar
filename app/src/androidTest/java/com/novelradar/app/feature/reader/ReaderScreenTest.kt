@@ -14,6 +14,9 @@ import com.novelradar.app.domain.model.ReaderMode
 import com.novelradar.app.domain.model.ReaderTheme
 import com.novelradar.app.domain.repository.ChapterOrigin
 import com.novelradar.app.domain.repository.LoadedChapter
+import com.novelradar.app.domain.repository.ReadingLocation
+import com.novelradar.app.domain.model.ChapterContentFormat
+import com.novelradar.app.domain.model.SourceFailure
 import com.novelradar.app.ui.theme.NovelRadarTheme
 import org.junit.Rule
 import org.junit.Test
@@ -51,6 +54,51 @@ class ReaderScreenTest {
         compose.onNodeWithText("目录").performClick()
         compose.onNodeWithText("第二章").performClick()
         assertThat(selected).isEqualTo("c1")
+    }
+
+    @Test fun reviewNoticeKeepsOriginalPositionAndOpensCatalogWhileToolsAreHidden() {
+        var selected: String? = null
+        val review = state().copy(positionNeedsReview = true, originalChapterTitle = "原第二章",
+            originalReadingLocation = ReadingLocation("book", "b", "c1", 1, 888, 50L, ChapterContentFormat.LEGACY),
+            notice = "设置保存失败，请重试", error = SourceFailure.Timeout)
+        compose.setContent {
+            NovelRadarTheme {
+                ReaderScreen(review, onBack = {}, onPositionChanged = {}, onPrevious = {}, onNext = {},
+                    onRetry = {}, onChapterSelected = { selected = it }, onPreferencesChanged = {})
+            }
+        }
+        compose.onNodeWithTag("reader_position_review").assertIsDisplayed()
+        compose.onNodeWithText("原阅读位置：原第二章 · UTF-16 偏移 888").assertIsDisplayed()
+        compose.onNodeWithText("原记录来自另一书源").assertIsDisplayed()
+        compose.onNodeWithText("设置保存失败，请重试").assertIsDisplayed()
+        compose.onNodeWithText("连接超时，请检查网络后重试").assertIsDisplayed()
+        compose.onNodeWithText("选择章节").performClick()
+        compose.onNodeWithText("第二章").performClick()
+        assertThat(selected).isEqualTo("c1")
+    }
+
+    @Test fun verifiedReviewOffersConfirmationButTemporaryLegacyBodyDoesNot() {
+        val review = mutableStateOf(state().copy(positionNeedsReview = true,
+            originalReadingLocation = ReadingLocation("book", "a", "missing", 8, 888, 50L)))
+        var confirmations = 0
+        compose.setContent {
+            NovelRadarTheme {
+                ReaderScreen(review.value, onBack = {}, onPositionChanged = {}, onPrevious = {}, onNext = {},
+                    onRetry = {}, onChapterSelected = {}, onPreferencesChanged = {}, onConfirmPosition = { confirmations++ })
+            }
+        }
+        compose.onNodeWithText("原阅读位置：第9章 · UTF-16 偏移 888").assertIsDisplayed()
+        compose.onNodeWithText("确认当前位置").performClick()
+        assertThat(confirmations).isEqualTo(1)
+        compose.runOnIdle { review.value = review.value.copy(notice = POSITION_CONFIRMATION_FAILURE_NOTICE) }
+        compose.onNodeWithText("阅读位置确认失败，请重试确认").assertIsDisplayed()
+        compose.onNodeWithText("重试返回").assertDoesNotExist()
+        compose.onNodeWithText("重试确认").performClick()
+        assertThat(confirmations).isEqualTo(2)
+        compose.runOnIdle { review.value = review.value.copy(content = review.value.content!!.copy(boundaryVerified = false)) }
+        compose.onNodeWithText("确认当前位置").assertDoesNotExist()
+        compose.onNodeWithText("当前显示临时旧正文，章节范围尚未确认。原阅读位置会继续保留，请选择章节或重试加载。").assertIsDisplayed()
+        compose.onNodeWithText("重试加载").assertIsDisplayed()
     }
 
     private fun state(): ReaderUiState {

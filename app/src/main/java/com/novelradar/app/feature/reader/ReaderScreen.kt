@@ -57,6 +57,7 @@ fun ReaderScreen(
     onChapterSelected: (String) -> Unit,
     onPreferencesChanged: ((ReaderPreferences) -> ReaderPreferences) -> Unit,
     modifier: Modifier = Modifier,
+    onConfirmPosition: () -> Unit = {},
 ) {
     var controlsVisible by remember { mutableStateOf(false) }
     var catalogVisible by remember { mutableStateOf(false) }
@@ -92,15 +93,44 @@ fun ReaderScreen(
         if (controlsVisible) ReaderControls(state, colors.first, colors.second, onPrevious, onNext,
             { catalogVisible = true }, { settingsVisible = true }, Modifier.align(Alignment.BottomCenter))
 
-        if (state.error != null || state.notice != null) Surface(
+        if (state.positionNeedsReview || state.error != null || state.notice != null) Surface(
             Modifier.align(if (state.content == null) Alignment.Center else Alignment.TopCenter)
                 .padding(top = if (state.content == null) 0.dp else 66.dp, start = 16.dp, end = 16.dp),
             color = colors.first, contentColor = colors.second, shadowElevation = 4.dp,
         ) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(state.notice ?: state.error!!.readerMessage(), fontSize = 14.sp)
+                if (state.positionNeedsReview) Column(Modifier.testTag("reader_position_review"),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("阅读位置需要确认", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    state.originalReadingLocation?.let { original ->
+                        val currentSource = state.content?.chapter?.sourceId ?: state.chapters.firstOrNull()?.sourceId
+                        if (currentSource != null && original.sourceId != currentSource) Text("原记录来自另一书源", fontSize = 12.sp)
+                        val chapter = state.originalChapterTitle ?: if (original.chapterIndex >= 0) "第${original.chapterIndex + 1}章" else "原章节"
+                        Text("原阅读位置：$chapter · UTF-16 偏移 ${original.offset}", fontSize = 12.sp)
+                    }
+                    val verified = state.content?.boundaryVerified == true
+                    val preservation = if (state.originalReadingLocation != null) "原阅读位置会继续保留" else "确认前不会自动保存阅读位置"
+                    Text(if (state.content == null) "$preservation，请选择章节或重试加载。"
+                        else if (verified) "正文已更新。请选择章节，或阅读到合适位置后确认；$preservation。"
+                        else "当前显示临时旧正文，章节范围尚未确认。$preservation，请选择章节或重试加载。",
+                        fontSize = 12.sp, color = colors.second.copy(alpha = 0.8f))
+                    Row {
+                        TextButton(onClick = { catalogVisible = true }) { Text("选择章节", color = colors.second) }
+                        if (verified) TextButton(onClick = onConfirmPosition, enabled = !state.loading) {
+                            Text(if (state.notice == POSITION_CONFIRMATION_FAILURE_NOTICE) "重试确认" else "确认当前位置",
+                                color = colors.second.copy(alpha = if (state.loading) 0.35f else 1f))
+                        } else if (state.error == null) TextButton(onClick = onRetry, enabled = !state.loading) {
+                            Text("重试加载", color = colors.second.copy(alpha = if (state.loading) 0.35f else 1f))
+                        }
+                    }
+                }
+                state.notice?.let { Text(it, fontSize = 14.sp) }
+                state.error?.let { Text(it.readerMessage(), fontSize = 14.sp) }
                 if (state.content != null && state.error != null) Text("当前章节仍可继续阅读", fontSize = 11.sp, color = colors.second.copy(alpha = 0.7f))
-                TextButton(onClick = if (state.error != null) onRetry else onBack) { Text(if (state.error != null) "重试" else "重试返回") }
+                if (state.error != null || (state.notice != null && state.notice != POSITION_CONFIRMATION_FAILURE_NOTICE))
+                    TextButton(onClick = if (state.error != null) onRetry else onBack) {
+                    Text(if (state.error != null) "重试" else "重试返回", color = colors.second)
+                }
             }
         }
     }
