@@ -106,7 +106,7 @@ fun ReaderScreen(
                         val currentSource = state.content?.chapter?.sourceId ?: state.chapters.firstOrNull()?.sourceId
                         if (currentSource != null && original.sourceId != currentSource) Text("原记录来自另一书源", fontSize = 12.sp)
                         val chapter = state.originalChapterTitle ?: if (original.chapterIndex >= 0) "第${original.chapterIndex + 1}章" else "原章节"
-                        Text("原阅读位置：$chapter · UTF-16 偏移 ${original.offset}", fontSize = 12.sp)
+                        Text("原阅读位置：$chapter · 原字符位置 ${original.offset}（待确认）", fontSize = 12.sp)
                     }
                     val verified = state.content?.boundaryVerified == true
                     val preservation = if (state.originalReadingLocation != null) "原阅读位置会继续保留" else "确认前不会自动保存阅读位置"

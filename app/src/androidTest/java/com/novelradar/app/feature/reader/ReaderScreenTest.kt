@@ -68,7 +68,7 @@ class ReaderScreenTest {
             }
         }
         compose.onNodeWithTag("reader_position_review").assertIsDisplayed()
-        compose.onNodeWithText("原阅读位置：原第二章 · UTF-16 偏移 888").assertIsDisplayed()
+        compose.onNodeWithText("原阅读位置：原第二章 · 原字符位置 888（待确认）").assertIsDisplayed()
         compose.onNodeWithText("原记录来自另一书源").assertIsDisplayed()
         compose.onNodeWithText("设置保存失败，请重试").assertIsDisplayed()
         compose.onNodeWithText("连接超时，请检查网络后重试").assertIsDisplayed()
@@ -87,7 +87,7 @@ class ReaderScreenTest {
                     onRetry = {}, onChapterSelected = {}, onPreferencesChanged = {}, onConfirmPosition = { confirmations++ })
             }
         }
-        compose.onNodeWithText("原阅读位置：第9章 · UTF-16 偏移 888").assertIsDisplayed()
+        compose.onNodeWithText("原阅读位置：第9章 · 原字符位置 888（待确认）").assertIsDisplayed()
         compose.onNodeWithText("确认当前位置").performClick()
         assertThat(confirmations).isEqualTo(1)
         compose.runOnIdle { review.value = review.value.copy(notice = POSITION_CONFIRMATION_FAILURE_NOTICE) }

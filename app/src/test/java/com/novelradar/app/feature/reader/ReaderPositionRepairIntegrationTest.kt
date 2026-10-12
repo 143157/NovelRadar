@@ -6,7 +6,9 @@ import com.novelradar.app.data.db.ChapterDao
 import com.novelradar.app.data.db.entity.ChapterEntity
 import com.novelradar.app.data.files.AtomicChapterFileStore
 import com.novelradar.app.data.repository.ChapterContentFetcher
+import com.novelradar.app.data.repository.ChapterPageFetcher
 import com.novelradar.app.data.repository.DefaultChapterRepository
+import com.novelradar.app.data.repository.RuleBasedChapterContentFetcher
 import com.novelradar.app.data.repository.RoomReadingProgressRepository
 import com.novelradar.app.domain.model.*
 import com.novelradar.app.domain.repository.*
@@ -14,8 +16,7 @@ import com.novelradar.app.source.SourceEngine
 import com.novelradar.app.source.http.SearchRequestFactory
 import com.novelradar.app.source.http.SourceHttpClient
 import com.novelradar.app.source.parse.*
-import com.novelradar.app.source.rule.RuleJsonParser
-import com.novelradar.app.source.rule.RuleParseResult
+import com.novelradar.app.source.rule.RuleDto
 import com.novelradar.app.source.script.ScriptExecutor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -179,6 +180,45 @@ class ReaderPositionRepairIntegrationTest {
         }
     }
 
+    @Test fun disabledStoredRuleCannotFetchOrConfirmLegacyPosition() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse().addHeader("Content-Type", "text/html; charset=utf-8")
+                .setBody("<h1>第一章</h1><div id=content>修复单章正文</div>"))
+            val files = AtomicChapterFileStore(temporary.root.toPath())
+            val oldText = "旧混章正文😀".repeat(20)
+            val old = files.write("book", "a", "one", oldText)
+            val row = chapter("one", 0, server).copy(localContentState = "CACHED", localFilePath = old.relativePath,
+                contentSha256 = old.sha256, contentBytes = old.byteCount)
+            val dao = MemoryChapterDao(row)
+            val original = ReadingLocation("book", "a", "one", 0, 55, 50L, ChapterContentFormat.LEGACY)
+            val storage = MemoryBooks(original)
+            val vm = reader(dao, files, httpFetcher(dao, server, enabled = false), storage, initialChapterId = "one")
+            val owner = ViewModelStore().also { it.put("reader", vm) }
+            try {
+                val state = withTimeout(10_000) { vm.uiState.first { !it.loading && it.content != null } }
+                assertThat(server.requestCount).isEqualTo(0)
+                assertThat(state.content!!.boundaryVerified).isFalse()
+                assertThat(state.content.content).isEqualTo(oldText)
+                assertThat(state.positionNeedsReview).isTrue()
+                assertThat(state.originalReadingLocation).isEqualTo(original)
+                assertThat(state.initialEntryCompleted).isFalse()
+                assertThat(vm.confirmPosition()).isFalse()
+                vm.onPositionChanged(16)
+                vm.saveOnStop()
+                vm.retry()
+                withTimeout(10_000) { vm.uiState.first { !it.loading } }
+                assertThat(vm.uiState.value.initialEntryCompleted).isFalse()
+                assertThat(vm.close()).isTrue()
+                assertThat(server.requestCount).isEqualTo(0)
+                assertThat(storage.value.value).isEqualTo(original)
+                assertThat(storage.writes).isEmpty()
+                assertThat(dao.getChapter("book", "a", "one")).isEqualTo(row)
+                assertThat(files.read("book", "a", "one", old.sha256)).isEqualTo(oldText)
+            } finally { owner.clear() }
+        }
+    }
+
     private fun reader(dao: MemoryChapterDao, files: AtomicChapterFileStore, fetcher: ChapterContentFetcher,
         storage: MemoryBooks, progress: ReadingProgressRepository = RoomReadingProgressRepository(storage),
         initialChapterId: String? = null): ReaderViewModel {
@@ -198,24 +238,30 @@ class ReaderPositionRepairIntegrationTest {
             settings, progress, clock = { 100L })
     }
 
-    private fun httpFetcher(dao: ChapterDao, server: MockWebServer): ChapterContentFetcher {
+    private fun httpFetcher(dao: ChapterDao, server: MockWebServer, enabled: Boolean = true): ChapterContentFetcher {
         val raw = """{"id":"a","url":"${server.url("/")}","name":"Source",
             "search":{"url":"${server.url("/search?q=%s")}","method":"GET","result":".item","bookName":"a"},
             "toc":{"item":"#toc a"},"chapter":{"title":"h1","content":"#content","pagination":true,"nextPage":"a.next"}}"""
-        val rule = (RuleJsonParser().parse(raw) as RuleParseResult.Success).rules.single()
+        val stored = StoredSourceRule("a", raw, enabled = enabled, allowCleartext = true)
         val selector = HtmlSelector()
         val scripts = object : ScriptExecutor {
             override suspend fun transform(input: String, script: String): SourceResult<String> = SourceResult.Success(input)
         }
         val engine = SourceEngine(SearchRequestFactory(), SourceHttpClient(), SearchPageParser(selector, scripts),
             BookPageParser(selector, scripts), TocPageParser(selector, scripts), ChapterPageParser(selector, scripts), selector, scripts)
-        return ChapterContentFetcher { row ->
-            when (val result = engine.chapter(rule, "a", row.url!!, true,
-                ChapterRequestContext(dao.getChapters(row.bookId, row.sourceId).mapNotNull { it.url }.toSet()))) {
-                is SourceResult.Success -> SourceResult.Success(result.value.content)
-                is SourceResult.Failure -> result
-            }
-        }
+        return RuleBasedChapterContentFetcher(MemoryRules(stored),
+            ChapterPageFetcher { rule, sourceId, url, allowed, context -> engine.chapter(rule, sourceId, url, allowed, context) },
+            chapterUrls = { bookId, sourceId -> dao.getChapters(bookId, sourceId).mapNotNull { it.url } })
+    }
+
+    private class MemoryRules(private val stored: StoredSourceRule) : SourceRuleRepository {
+        override fun observeAll(): Flow<List<StoredSourceRule>> = flowOf(listOf(stored))
+        override suspend fun enabled() = listOf(stored).filter { it.enabled }
+        override suspend fun upsertImported(rules: List<RuleDto>) = ImportSummary(0, 0, 0)
+        override suspend fun setEnabled(sourceId: String, enabled: Boolean) = Unit
+        override suspend fun setCleartextAllowed(sourceId: String, allowed: Boolean) = Unit
+        override suspend fun updateHealth(sourceId: String, health: SourceHealth) = Unit
+        override suspend fun deleteUserRule(sourceId: String) = Unit
     }
 
     private fun chapter(id: String, index: Int, server: MockWebServer) =
