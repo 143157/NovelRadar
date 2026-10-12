@@ -55,7 +55,41 @@ fun chapterCharacterProgress(text: String, utf16Offset: Int): ChapterCharacterPr
 }
 ```
 
-The code above defines the display contract, not a new persistence format. UI must memoize totals by immutable body identity; do not recount the entire body on every scroll event. If a prefix index is needed for large bodies, keep it bounded and test it; do not add a whole-book word index.
+The code above defines the display contract, not a new persistence format. It may serve as a small-input/reference function; UI must not call its full count repeatedly. Add a pure sparse `ChapterCharacterIndex` in the same focused file, memoized by immutable body identity. Its total is computed once, and each position lookup scans at most one 256-unit block (257 when its boundary crosses a surrogate pair). This adds roughly one Int per 256 UTF-16 units, not a whole-book word index or an array per character.
+
+```kotlin
+class ChapterCharacterIndex(private val text: String) {
+    private val checkpoints = IntArray(text.length / 256 + 1)
+    val total: Int
+
+    init {
+        var previousEnd = 0
+        var count = 0
+        for (block in checkpoints.indices) {
+            val end = boundedPrefix(block * 256)
+            count += text.codePointCount(previousEnd, end)
+            checkpoints[block] = count
+            previousEnd = end
+        }
+        total = count + text.codePointCount(previousEnd, text.length)
+    }
+
+    fun progress(utf16Offset: Int): ChapterCharacterProgress {
+        val end = boundedPrefix(utf16Offset)
+        val block = end / 256
+        val start = boundedPrefix(block * 256)
+        return ChapterCharacterProgress(checkpoints[block] + text.codePointCount(start, end), total)
+    }
+
+    private fun boundedPrefix(offset: Int): Int {
+        var end = offset.coerceIn(0, text.length)
+        if (end in 1 until text.length && text[end].isLowSurrogate() && text[end - 1].isHighSurrogate()) end--
+        return end
+    }
+}
+```
+
+Test the sparse index against the direct reference function at every offset of mixed Unicode samples, particularly a pair straddling unit 256, empty text and long bodies. Tests precede implementation; the snippets define the required interface/algorithm. Do not add production test-only counters.
 
 ```kotlin
 @Test fun displayedCharactersUseCodePointsWhileOffsetsRemainUtf16() {
@@ -163,7 +197,8 @@ Build measured pages per chapter and keep their chapter/offset identity. At the 
 `NovelRadarApp.ReaderRoute` routes `ChapterReadingPosition` with the applicable position version; layout collectors use the current callback without leaking a previous session. Reader catalog highlights the active chapter and initially scrolls to it when opened. Top title, catalog highlight and per-chapter display derive from the same active state.
 
 ```kotlin
-val shown = chapterCharacterProgress(loaded.content, state.offset)
+val characterIndex = remember(loaded.content) { ChapterCharacterIndex(loaded.content) }
+val shown = characterIndex.progress(state.offset)
 val label = "${shown.read} / ${shown.total} 字 · 本章 ${shown.percent}% · " +
     "第 ${state.catalogPosition + 1} / ${state.chapters.size} 章"
 ```
@@ -182,7 +217,7 @@ Current `BookDetailViewModel` does not subscribe to reading progress and its dir
 
 ```kotlin
 val currentChapterId: String? get() = readingLocation
-    ?.takeIf { it.sourceId == selectedSourceId }
+    ?.takeIf { it.bookId == book?.bookId && it.sourceId == selectedSourceId }
     ?.chapterId
 ```
 
