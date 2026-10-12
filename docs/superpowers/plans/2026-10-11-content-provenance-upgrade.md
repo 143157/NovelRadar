@@ -82,11 +82,11 @@ This closes Task 1 only. Legacy body handling, reader recovery and continuous re
 - Modify: `app/src/main/java/com/novelradar/app/data/repository/DefaultChapterRepository.kt` (body load/verified/download logic; keep the reviewed fetcher seam).
 - Test: `app/src/test/java/com/novelradar/app/data/files/AtomicChapterFileStoreTest.kt`, `DefaultChapterRepositoryTest.kt` and focused real-HTTP legacy-repair integration.
 
-- [ ] **Step 1: Observe failing storage and repository tests**
+- [x] **Step 1: Observe failing storage and repository tests**
 
 Verify a legacy hash-valid file does not count as newly boundary-verified or complete in the download runner's `verifiedBytes` path. A normal explicit load may attempt a policy-checked fresh single-chapter fetch. Failed network/parse/write/metadata repair keeps the old bytes readable with the original hash and does not erase its bookmark. A successful repair publishes the new single-chapter body and marker only after guarded storage succeeds; retain a hash-named previous file for old-offset recovery. Current-format cache hits require no network, stay independent of another chapter's network request, and preserve downloaded status.
 
-- [ ] **Step 2: Add the minimum recovery-aware file method**
+- [x] **Step 2: Add the minimum recovery-aware file method**
 
 Add a default fail-closed operation rather than silently overwriting a legacy file in an unsupported store:
 
@@ -101,11 +101,21 @@ In the real atomic store, under the existing file mutex and IO dispatcher, verif
 
 When `read(..., expectedSha256)` cannot find a matching primary file, allow the matching hash-named retained file as a recovery candidate, under the same 8 MiB/UTF-8/hash bounds. Never return a different-hash backup or glob arbitrary directories. The canonical database path remains `books/<book>/<source>/<chapter>.txt`. Existing explicit book deletion removes its retained files too; no new automatic deletion in this phase.
 
-- [ ] **Step 3: Keep legacy data separate from verified cache/download results**
+- [x] **Step 3: Keep legacy data separate from verified cache/download results**
 
 For current-format rows, retain the original cache-first behavior. For a readable legacy row, a fresh successful fetch uses `writePreservingPrevious`, then the existing URL-guarded metadata update with CURRENT. Failure of the final metadata update does not make the old hash unreadable. A normal reader load that cannot repair may return its legacy body with `boundaryVerified = false`; this is a temporary viewing fallback, never proof of correct chapter progress. Prefetch must not count that fallback as a successfully prepared next chapter, and must respect metered/disabled prefetch policy before attempting a repair. `download` must not return success for an unverified legacy fallback; `verifiedBytes` returns null for a legacy row rather than promoting it to DOWNLOADED.
 
 Do not swallow CancellationException or rewrite current-format rows into legacy. Preserve existing per-chapter locks, shared book permits, deletion barriers and current URL validation. Use fake stores only at the storage boundary; include a real atomic-store/MockWebServer repair case proving a three-chapter legacy body becomes one verified chapter while the old bytes are recoverable.
+
+### Task 2 verification and review
+
+Implementation: `1879abe84d7f21d0f89f0831e2231d607f52c2fa`, exactly three declared production files and two existing test files. Its parent is `1d49ff5`; root's later documentation-only commits do not belong to the implementation diff. Independent specification review then quality review passed without required changes. The reviewed source/fetcher seam, entities, schemas, reader, downloader policies and delivered APKs are unchanged.
+
+Observed RED is saved under ignored `app/build/task2-evidence/`: initial 37 tests/five assertions, expanded 61 tests/22 failures, then a corrected identity/stale-metadata run with two tests/two Truth assertions and zero errors/skips. The expanded URL case originally used a cast; the targeted follow-up replaced it with an explicit typed-result assertion. Focused GREEN contains 62 tests (20 atomic storage, 42 repository), zero failures/errors/skips. Root directly inspected those XML files, the three production diffs and the real HTTP/atomic-store repair and metadata-failure retry tests.
+
+Root independently ran the full four-task milestone command: exit 0, seven seconds, 61 tasks (one executed, 60 up-to-date). A forced unit rerun executed all 26 tasks: exit 0, one minute ten seconds; fresh XML contains **468 tests / 45 suites / zero failures, errors or skips**. Actual SARIF severities remain seven existing warnings and zero errors. Whitespace/status checks are clean, and the complete SHA-256 values of both delivered APKs match their original records. Android-test sources compiled but did not run on a phone. No new stable APK was copied or installed.
+
+The real HTTP regression fetches only the first chapter despite a known next-chapter link, publishes verified single-chapter content, and retains the old three-chapter bytes by exact SHA. Retry after metadata failure reuses that backup; unverified fallback does not count as prefetch/download/verified bytes. This closes Task 2 only: the existing reader still needs the recovery gate before a user can safely receive a repaired APK.
 
 ## Task 3: Prevent implicit reinterpretation or overwriting of an old reading position
 
