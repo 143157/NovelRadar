@@ -119,6 +119,8 @@ Do not swallow CancellationException or rewrite current-format rows into legacy.
 
 Start from an old-format nonzero bookmark whose offset points into a mixed body; repair returns a smaller verified body. Assert the original persisted location is still intact after load, scroll callbacks, stop, close, rotation and failed new-chapter loading. A verified explicit chapter selection or explicit position confirmation may replace it; background caching and retry alone may not. Test legacy content with no network remains temporarily viewable with a warning, never silently marked correct. An already current-format saved position within the body restores unchanged.
 
+The existing `ReaderViewModelTest.restoresProgressOnlyForRequestedSourceAndClampsOffset` accepts automatic clamping of an out-of-range saved location. Replace that obsolete expectation with a recovery-gate assertion retaining the original persisted offset; keep separate coverage for valid CURRENT positions and other-source records. This is an intentional correction of a test that currently codifies unsafe behavior, not permission to weaken lifecycle or source ownership checks.
+
 - [ ] **Step 2: Add a retained recovery gate, not a second progress store**
 
 Append a `positionNeedsReview: Boolean = false` state flag. Keep the original persisted location separately in the ViewModel only for this retained session; no metadata migration rewrites it. The restore decision is explicit:
