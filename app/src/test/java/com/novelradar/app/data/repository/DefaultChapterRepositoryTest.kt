@@ -4,6 +4,8 @@ import com.google.common.truth.Truth.assertThat
 import com.novelradar.app.data.db.ChapterDao
 import com.novelradar.app.data.db.entity.ChapterEntity
 import com.novelradar.app.data.files.AtomicChapterFileStore
+import com.novelradar.app.data.files.ChapterFileStore
+import com.novelradar.app.domain.model.ChapterContentFormat
 import com.novelradar.app.domain.model.SourceFailure
 import com.novelradar.app.domain.model.SourceHealth
 import com.novelradar.app.domain.model.SourceResult
@@ -24,6 +26,7 @@ import com.novelradar.app.source.parse.TocPageParser
 import com.novelradar.app.source.rule.RuleDto
 import com.novelradar.app.source.script.ScriptExecutor
 import java.nio.file.Files
+import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
@@ -45,11 +48,374 @@ import okhttp3.mockwebserver.RecordedRequest
 class DefaultChapterRepositoryTest {
     @get:Rule val temporary = TemporaryFolder()
 
+    @Test fun readableLegacyBodyIsTemporaryUnverifiedFallbackWhenOffline() = runBlocking {
+        val files = AtomicChapterFileStore(temporary.root.toPath())
+        val old = files.write("book", "source", "one", "第一章\n第二章\n第三章")
+        val row = chapter("one", 0).copy(localContentState = "DOWNLOADED", localFilePath = old.relativePath,
+            contentSha256 = old.sha256, contentBytes = old.byteCount)
+        val dao = FakeChapterDao(row)
+        var fetches = 0
+        val repository = DefaultChapterRepository(dao, files, { fetches++; SourceResult.Failure(SourceFailure.Timeout) })
+
+        val loaded = (repository.loadChapter("book", "source", "one") as SourceResult.Success).value
+
+        assertThat(loaded.boundaryVerified).isFalse()
+        assertThat(loaded.content).isEqualTo("第一章\n第二章\n第三章")
+        assertThat(fetches).isEqualTo(1)
+        assertThat(dao.getChapter("book", "source", "one")).isEqualTo(row)
+        assertThat(files.read("book", "source", "one", old.sha256)).isEqualTo(loaded.content)
+    }
+
+    @Test fun legacyAndUnknownMarkersNeverProduceVerifiedBytesOrPromoteDownloadState() = runBlocking {
+        val files = AtomicChapterFileStore(temporary.root.toPath())
+        val old = files.write("book", "source", "one", "旧混章正文")
+        val legacy = chapter("one", 0).copy(localContentState = "CACHED", localFilePath = old.relativePath,
+            contentSha256 = old.sha256, contentBytes = old.byteCount)
+        val dao = FakeChapterDao(legacy)
+        val repository = DefaultChapterRepository(dao, files, { error("Verified byte checks must not fetch") })
+
+        assertThat(repository.verifiedBytes(legacy)).isNull()
+        assertThat(dao.getChapter("book", "source", "one")).isEqualTo(legacy)
+        val unknown = legacy.copy(contentFormatVersion = 99)
+        dao.upsert(unknown)
+        assertThat(repository.verifiedBytes(unknown)).isNull()
+        assertThat(dao.getChapter("book", "source", "one")).isEqualTo(unknown)
+    }
+
+    @Test fun legacyDownloadFailureCannotCountTemporaryBodyAsCompleted() = runBlocking {
+        val files = AtomicChapterFileStore(temporary.root.toPath())
+        val old = files.write("book", "source", "one", "旧正文")
+        val legacy = chapter("one", 0).copy(localContentState = "CACHED", localFilePath = old.relativePath,
+            contentSha256 = old.sha256, contentBytes = old.byteCount)
+        val dao = FakeChapterDao(legacy)
+        var fetches = 0
+        val repository = DefaultChapterRepository(dao, files, { fetches++; SourceResult.Failure(SourceFailure.Timeout) })
+
+        assertThat(repository.download(legacy)).isEqualTo(SourceResult.Failure(SourceFailure.Timeout))
+        assertThat(fetches).isEqualTo(1)
+        assertThat(dao.getChapter("book", "source", "one")).isEqualTo(legacy)
+        assertThat(files.read("book", "source", "one", old.sha256)).isEqualTo("旧正文")
+    }
+
+    @Test fun legacyRepairFetchesOnceAndPreservesOriginalHashReadableAfterCurrentMetadata() = runBlocking {
+        val files = AtomicChapterFileStore(temporary.root.toPath())
+        val old = files.write("book", "source", "one", "旧混章正文")
+        val dao = FakeChapterDao(chapter("one", 0).copy(localContentState = "DOWNLOADED", localFilePath = old.relativePath,
+            contentSha256 = old.sha256, contentBytes = old.byteCount))
+        var fetches = 0
+        val repository = DefaultChapterRepository(dao, files, { fetches++; SourceResult.Success("仅第一章正文") })
+
+        val loaded = (repository.loadChapter("book", "source", "one") as SourceResult.Success).value
+        val repaired = dao.getChapter("book", "source", "one")!!
+
+        assertThat(fetches).isEqualTo(1)
+        assertThat(loaded.content).isEqualTo("仅第一章正文")
+        assertThat(loaded.boundaryVerified).isTrue()
+        assertThat(repaired.contentFormatVersion).isEqualTo(ChapterContentFormat.CURRENT)
+        assertThat(repaired.localContentState).isEqualTo("DOWNLOADED")
+        assertThat(files.read("book", "source", "one", old.sha256)).isEqualTo("旧混章正文")
+        assertThat(files.read("book", "source", "one", repaired.contentSha256)).isEqualTo("仅第一章正文")
+    }
+
+    @Test fun realHttpLegacyThreeChapterBodyRepairsToOneChapterWithoutRequestingKnownNextChapter() {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse().addHeader("Content-Type", "text/html; charset=utf-8")
+                .setBody("<h1>第一章</h1><div id=content>第一章单章正文</div><a class=next href='/chapter/2'>下一页</a>"))
+            runBlocking {
+                val files = AtomicChapterFileStore(temporary.root.toPath())
+                val oldText = "第一章旧正文😀\n\n第二章旧正文\n\n第三章旧正文"
+                val legacy = storedChapter(files, "one", 0, oldText, "DOWNLOADED")
+                    .copy(url = server.url("/chapter/1").toString())
+                val dao = FakeChapterDao(legacy,
+                    chapter("two", 1).copy(url = server.url("/chapter/2").toString()),
+                    chapter("three", 2).copy(url = server.url("/chapter/3").toString()))
+                val repository = DefaultChapterRepository(dao, files, realFetcher(server, dao))
+
+                val loaded = (withTimeout(10_000) { repository.loadChapter("book", "source", "one") } as SourceResult.Success).value
+                val repaired = dao.getChapter("book", "source", "one")!!
+
+                assertThat(loaded.content).isEqualTo("第一章单章正文")
+                assertThat(loaded.boundaryVerified).isTrue()
+                assertThat(loaded.origin).isEqualTo(ChapterOrigin.Network)
+                assertThat(server.requestCount).isEqualTo(1)
+                assertThat(server.takeRequest().requestUrl!!.encodedPath).isEqualTo("/chapter/1")
+                assertThat(repaired.contentFormatVersion).isEqualTo(ChapterContentFormat.CURRENT)
+                assertThat(repaired.localContentState).isEqualTo("DOWNLOADED")
+                assertThat(repaired.localFilePath).isEqualTo("books/book/source/one.txt")
+                assertThat(repaired.contentBytes).isEqualTo(loaded.content.toByteArray(Charsets.UTF_8).size.toLong())
+                assertThat(files.read("book", "source", "one", repaired.contentSha256)).isEqualTo(loaded.content)
+                assertThat(files.read("book", "source", "one", legacy.contentSha256)).isEqualTo(oldText)
+                assertThat(Files.readAllBytes(temporary.root.toPath().resolve("books/book/source/one.legacy-${legacy.contentSha256}.txt")))
+                    .isEqualTo(oldText.toByteArray(Charsets.UTF_8))
+                assertThat((repository.loadChapter("book", "source", "one") as SourceResult.Success).value.boundaryVerified).isTrue()
+                assertThat(server.requestCount).isEqualTo(1)
+            }
+        }
+    }
+
+    @Test fun realHttpMetadataFailureKeepsLegacyReadableAndRetryReusesOriginalHashBackup() {
+        MockWebServer().use { server ->
+            server.start()
+            repeat(2) { server.enqueue(MockResponse().addHeader("Content-Type", "text/html; charset=utf-8")
+                .setBody("<h1>第一章</h1><div id=content>修复单章正文</div>")) }
+            runBlocking {
+                val files = AtomicChapterFileStore(temporary.root.toPath())
+                val legacy = storedChapter(files, "one", 0, "第一章\n第二章\n第三章", "DOWNLOADED")
+                    .copy(url = server.url("/chapter/1").toString())
+                val dao = FakeChapterDao(legacy)
+                var metadataFails = true
+                dao.beforeMetadataUpdate = { if (metadataFails) throw IOException("metadata failed") }
+                val repository = DefaultChapterRepository(dao, files, realFetcher(server, dao))
+
+                val first = (withTimeout(10_000) { repository.loadChapter("book", "source", "one") } as SourceResult.Success).value
+
+                assertThat(first.content).isEqualTo("第一章\n第二章\n第三章")
+                assertThat(first.boundaryVerified).isFalse()
+                assertThat(dao.getChapter("book", "source", "one")).isEqualTo(legacy)
+                assertThat(files.read("book", "source", "one")).isEqualTo("修复单章正文")
+                assertThat(files.read("book", "source", "one", legacy.contentSha256)).isEqualTo(first.content)
+                val backup = temporary.root.toPath().resolve("books/book/source/one.legacy-${legacy.contentSha256}.txt")
+                val retainedTime = Files.getLastModifiedTime(backup)
+                metadataFails = false
+
+                val retry = (withTimeout(10_000) { repository.loadChapter("book", "source", "one") } as SourceResult.Success).value
+
+                assertThat(retry.content).isEqualTo("修复单章正文")
+                assertThat(retry.boundaryVerified).isTrue()
+                assertThat(server.requestCount).isEqualTo(2)
+                assertThat(Files.getLastModifiedTime(backup)).isEqualTo(retainedTime)
+                assertThat(files.read("book", "source", "one", legacy.contentSha256)).isEqualTo(first.content)
+                assertThat(dao.getChapter("book", "source", "one")!!.contentFormatVersion).isEqualTo(ChapterContentFormat.CURRENT)
+                assertThat(dao.getChapter("book", "source", "one")!!.localContentState).isEqualTo("DOWNLOADED")
+            }
+        }
+    }
+
+    @Test fun failedLegacyReplacementKeepsOriginalReadableAndMetadataUnchanged() = runBlocking {
+        val realFiles = AtomicChapterFileStore(temporary.root.toPath())
+        val legacy = storedChapter(realFiles, "one", 0, "旧混章正文")
+        val dao = FakeChapterDao(legacy)
+        val files = AtomicChapterFileStore(temporary.root.toPath(), replace = { _, target ->
+            Files.delete(target); throw IOException("interrupted replacement")
+        })
+        var fetches = 0
+        val repository = DefaultChapterRepository(dao, files, { fetches++; SourceResult.Success("单章正文") })
+
+        val loaded = (repository.loadChapter("book", "source", "one") as SourceResult.Success).value
+
+        assertThat(loaded.boundaryVerified).isFalse()
+        assertThat(loaded.content).isEqualTo("旧混章正文")
+        assertThat(fetches).isEqualTo(1)
+        assertThat(dao.getChapter("book", "source", "one")).isEqualTo(legacy)
+        assertThat(realFiles.read("book", "source", "one", legacy.contentSha256)).isEqualTo("旧混章正文")
+        assertThat(Files.exists(temporary.root.toPath().resolve("books/book/source/one.tmp"))).isFalse()
+    }
+
+    @Test fun realParseFailureReturnsOnlyUnverifiedLegacyViewingFallback() {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse().addHeader("Content-Type", "text/html; charset=utf-8").setBody("<h1>第一章</h1>"))
+            runBlocking {
+                val files = AtomicChapterFileStore(temporary.root.toPath())
+                val legacy = storedChapter(files, "one", 0, "原始旧正文").copy(url = server.url("/chapter/1").toString())
+                val dao = FakeChapterDao(legacy)
+                val repository = DefaultChapterRepository(dao, files, realFetcher(server, dao))
+
+                val loaded = (withTimeout(10_000) { repository.loadChapter("book", "source", "one") } as SourceResult.Success).value
+
+                assertThat(loaded.boundaryVerified).isFalse()
+                assertThat(loaded.content).isEqualTo("原始旧正文")
+                assertThat(server.requestCount).isEqualTo(1)
+                assertThat(dao.getChapter("book", "source", "one")).isEqualTo(legacy)
+            }
+        }
+    }
+
+    @Test fun disabledSourcePrefetchDoesNotFetchOrCountLegacyBody() {
+        MockWebServer().use { server ->
+            server.start()
+            runBlocking {
+                val files = AtomicChapterFileStore(temporary.root.toPath())
+                val legacy = storedChapter(files, "one", 1, "旧正文").copy(url = server.url("/chapter/1").toString())
+                val dao = FakeChapterDao(legacy)
+                val repository = DefaultChapterRepository(dao, files, realFetcher(server, dao, enabled = false),
+                    isMeteredNetwork = { false })
+
+                assertThat(repository.prefetchNext("book", "source", 0, count = 2)).isEqualTo(0)
+                assertThat(server.requestCount).isEqualTo(0)
+                assertThat(dao.getChapter("book", "source", "one")).isEqualTo(legacy)
+            }
+        }
+    }
+
+    @Test fun meteredOrZeroCountPrefetchDoesNotAttemptLegacyRepairAndFailedAllowedRepairDoesNotCount() = runBlocking {
+        val files = AtomicChapterFileStore(temporary.root.toPath())
+        val legacy = storedChapter(files, "one", 1, "旧正文")
+        val dao = FakeChapterDao(legacy)
+        var metered = true
+        var fetches = 0
+        val repository = DefaultChapterRepository(dao, files, { fetches++; SourceResult.Failure(SourceFailure.Timeout) },
+            isMeteredNetwork = { metered })
+
+        assertThat(repository.prefetchNext("book", "source", 0, count = 2)).isEqualTo(0)
+        metered = false
+        assertThat(repository.prefetchNext("book", "source", 0, count = 0)).isEqualTo(0)
+        assertThat(fetches).isEqualTo(0)
+        assertThat(repository.prefetchNext("book", "source", 0, count = 1)).isEqualTo(0)
+        assertThat(fetches).isEqualTo(1)
+        assertThat(dao.getChapter("book", "source", "one")).isEqualTo(legacy)
+    }
+
+    @Test fun legacyPrefetchRechecksMeteringAfterWaitingForChapterLock() = runBlocking {
+        val files = AtomicChapterFileStore(temporary.root.toPath())
+        val legacy = storedChapter(files, "one", 1, "旧正文")
+        val dao = FakeChapterDao(legacy)
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        val checked = CompletableDeferred<Unit>()
+        var metered = false
+        var fetches = 0
+        val repository = DefaultChapterRepository(dao, files, {
+            fetches++; entered.complete(Unit); release.await(); SourceResult.Failure(SourceFailure.Timeout)
+        }, isMeteredNetwork = { checked.complete(Unit); metered })
+        val foreground = async { repository.loadChapter("book", "source", "one") }
+        assertThat(withTimeoutOrNull(2_000) { entered.await() }).isNotNull()
+        val prefetch = async { repository.prefetchNext("book", "source", 0, count = 1) }
+        withTimeout(2_000) { checked.await() }
+        metered = true
+        release.complete(Unit)
+
+        assertThat((foreground.await() as SourceResult.Success).value.boundaryVerified).isFalse()
+        assertThat(prefetch.await()).isEqualTo(0)
+        assertThat(fetches).isEqualTo(1)
+        assertThat(dao.getChapter("book", "source", "one")).isEqualTo(legacy)
+    }
+
+    @Test fun changedUrlDuringLegacyFetchNeverPresentsOldBodyAsTheNewCurrentChapter() = runBlocking {
+        val files = AtomicChapterFileStore(temporary.root.toPath())
+        for (fetchSucceeds in listOf(false, true)) {
+            val id = if (fetchSucceeds) "success" else "failure"
+            val legacy = storedChapter(files, id, 0, "旧正文")
+            val dao = FakeChapterDao(legacy)
+            val changed = legacy.copy(url = "https://example.test/replacement")
+            val repository = DefaultChapterRepository(dao, files, {
+                dao.upsert(changed)
+                if (fetchSucceeds) SourceResult.Success("新正文") else SourceResult.Failure(SourceFailure.Timeout)
+            })
+
+            val result = repository.loadChapter("book", "source", id)
+            assertThat(result).isInstanceOf(SourceResult.Failure::class.java)
+            val failed = result as SourceResult.Failure
+
+            assertThat(failed.error).isInstanceOf(SourceFailure.UnsafeRule::class.java)
+            assertThat(dao.getChapter("book", "source", id)).isEqualTo(changed)
+            assertThat(files.read("book", "source", id, legacy.contentSha256)).isEqualTo("旧正文")
+        }
+    }
+
+    @Test fun missingOrCorruptLegacyFilesRecoverFreshlyWithoutInventingAnOldBackup() = runBlocking {
+        val files = AtomicChapterFileStore(temporary.root.toPath())
+        for (missing in listOf(false, true)) {
+            val id = if (missing) "missing" else "corrupt"
+            val legacy = storedChapter(files, id, 0, "旧正文")
+            val path = temporary.root.toPath().resolve(legacy.localFilePath!!)
+            if (missing) Files.delete(path) else Files.writeString(path, "损坏")
+            val dao = FakeChapterDao(legacy)
+            var fetches = 0
+            val repository = DefaultChapterRepository(dao, files, { fetches++; SourceResult.Success("单章正文") })
+
+            val loaded = (repository.loadChapter("book", "source", id) as SourceResult.Success).value
+
+            assertThat(loaded.boundaryVerified).isTrue()
+            assertThat(loaded.content).isEqualTo("单章正文")
+            assertThat(fetches).isEqualTo(1)
+            assertThat(dao.getChapter("book", "source", id)!!.contentFormatVersion).isEqualTo(ChapterContentFormat.CURRENT)
+            assertThat(Files.exists(path.resolveSibling("$id.legacy-${legacy.contentSha256}.txt"))).isFalse()
+        }
+    }
+
+    @Test fun validLegacyHashIsPreservedEvenWhenPersistedByteCountIsStale() = runBlocking {
+        val files = AtomicChapterFileStore(temporary.root.toPath())
+        val legacy = storedChapter(files, "one", 0, "旧正文").copy(contentBytes = 1)
+        val dao = FakeChapterDao(legacy)
+        val repository = DefaultChapterRepository(dao, files, { SourceResult.Success("单章正文") })
+
+        val loaded = (repository.loadChapter("book", "source", "one") as SourceResult.Success).value
+
+        assertThat(loaded.content).isEqualTo("单章正文")
+        assertThat(loaded.boundaryVerified).isTrue()
+        assertThat(files.read("book", "source", "one", legacy.contentSha256)).isEqualTo("旧正文")
+    }
+
+    @Test fun validLegacyBytesSurviveRepairEvenWhenPathOrLocalStateMetadataIsStale() = runBlocking {
+        val files = AtomicChapterFileStore(temporary.root.toPath())
+        for (stalePath in listOf(false, true)) {
+            val id = if (stalePath) "path" else "state"
+            val saved = storedChapter(files, id, 0, "原始旧正文")
+            val legacy = if (stalePath) saved.copy(localFilePath = "obsolete/$id.txt")
+                else saved.copy(localContentState = "NOT_STORED")
+            val dao = FakeChapterDao(legacy)
+            val repository = DefaultChapterRepository(dao, files, { SourceResult.Success("修复单章正文") })
+
+            val loaded = (repository.loadChapter("book", "source", id) as SourceResult.Success).value
+
+            assertThat(loaded.boundaryVerified).isTrue()
+            assertThat(loaded.content).isEqualTo("修复单章正文")
+            assertThat(files.read("book", "source", id, legacy.contentSha256)).isEqualTo("原始旧正文")
+        }
+    }
+
+    @Test fun unsupportedLegacyPreservingStoreCannotOverwriteReadableOldBody() = runBlocking {
+        val realFiles = AtomicChapterFileStore(temporary.root.toPath())
+        val legacy = storedChapter(realFiles, "one", 0, "旧正文")
+        var destructiveWrites = 0
+        val files = object : ChapterFileStore {
+            override suspend fun write(bookId: String, sourceId: String, chapterId: String, content: String) =
+                realFiles.write(bookId, sourceId, chapterId, content).also { destructiveWrites++ }
+            override suspend fun read(bookId: String, sourceId: String, chapterId: String, expectedSha256: String?) =
+                realFiles.read(bookId, sourceId, chapterId, expectedSha256)
+            override suspend fun deleteBook(bookId: String) = realFiles.deleteBook(bookId)
+        }
+        val dao = FakeChapterDao(legacy)
+        val repository = DefaultChapterRepository(dao, files, { SourceResult.Success("单章正文") })
+
+        val loaded = (repository.loadChapter("book", "source", "one") as SourceResult.Success).value
+
+        assertThat(loaded.boundaryVerified).isFalse()
+        assertThat(loaded.content).isEqualTo("旧正文")
+        assertThat(destructiveWrites).isEqualTo(0)
+        assertThat(dao.getChapter("book", "source", "one")).isEqualTo(legacy)
+    }
+
+    @Test fun legacyFetchAndMetadataCancellationAreRethrownWithoutLosingOriginalBody() {
+        runBlocking {
+            val files = AtomicChapterFileStore(temporary.root.toPath())
+            for (duringMetadata in listOf(false, true)) {
+                val id = if (duringMetadata) "metadata" else "fetch"
+                val legacy = storedChapter(files, id, 0, "旧正文")
+                val dao = FakeChapterDao(legacy)
+                if (duringMetadata) dao.beforeMetadataUpdate = { throw CancellationException("repair cancelled") }
+                val repository = DefaultChapterRepository(dao, files, {
+                    if (!duringMetadata) throw CancellationException("repair cancelled")
+                    SourceResult.Success("单章正文")
+                })
+
+                val cancelled = assertThrows(CancellationException::class.java) {
+                    runBlocking { repository.loadChapter("book", "source", id) }
+                }
+
+                assertThat(cancelled.message).isEqualTo("repair cancelled")
+                assertThat(dao.getChapter("book", "source", id)).isEqualTo(legacy)
+                assertThat(files.read("book", "source", id, legacy.contentSha256)).isEqualTo("旧正文")
+            }
+        }
+    }
+
     @Test fun verifiedCachedChapterReadsWhileAnotherChapterDownloadFetchIsStalled() = runBlocking {
         val files = AtomicChapterFileStore(temporary.root.toPath())
         val saved = files.write("book", "source", "cached", "已验证的正文")
         val cached = chapter("cached", 0).copy(localContentState = "CACHED", localFilePath = saved.relativePath,
-            contentSha256 = saved.sha256, contentBytes = saved.byteCount)
+            contentSha256 = saved.sha256, contentBytes = saved.byteCount, contentFormatVersion = ChapterContentFormat.CURRENT)
         val downloading = chapter("downloading", 1)
         val dao = FakeChapterDao(cached, downloading)
         val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
@@ -154,7 +520,7 @@ class DefaultChapterRepositoryTest {
         val files = AtomicChapterFileStore(temporary.root.toPath())
         val saved = files.write("book", "source", "one", "正文")
         val row = chapter("one", 0).copy(localContentState = "CACHED", localFilePath = saved.relativePath,
-            contentSha256 = saved.sha256, contentBytes = saved.byteCount)
+            contentSha256 = saved.sha256, contentBytes = saved.byteCount, contentFormatVersion = ChapterContentFormat.CURRENT)
         val dao = FakeChapterDao(row)
         val repository = DefaultChapterRepository(dao, files, { error("Network should not be used") })
         assertThat(repository.verifiedBytes(row)).isEqualTo(saved.byteCount)
@@ -185,7 +551,7 @@ class DefaultChapterRepositoryTest {
         val saved = files.write("book", "source", "one", "下载正文")
         val dao = FakeChapterDao(chapter("one", 0).copy(
             localContentState = "DOWNLOADED", localFilePath = saved.relativePath,
-            contentSha256 = saved.sha256, contentBytes = saved.byteCount,
+            contentSha256 = saved.sha256, contentBytes = saved.byteCount, contentFormatVersion = ChapterContentFormat.CURRENT,
         ))
         var fetches = 0
         val repository = DefaultChapterRepository(dao, files, { fetches++; SourceResult.Success("网络正文") })
@@ -202,7 +568,7 @@ class DefaultChapterRepositoryTest {
         val saved = files.write("book", "source", "one", "缓存正文")
         val dao = FakeChapterDao(chapter("one", 0).copy(
             localContentState = "CACHED", localFilePath = saved.relativePath,
-            contentSha256 = saved.sha256, contentBytes = saved.byteCount,
+            contentSha256 = saved.sha256, contentBytes = saved.byteCount, contentFormatVersion = ChapterContentFormat.CURRENT,
         ))
         val repository = DefaultChapterRepository(dao, files, { error("Network should not be used") })
 
@@ -510,6 +876,22 @@ class DefaultChapterRepositoryTest {
         return SourceEngine(SearchRequestFactory(), SourceHttpClient(), SearchPageParser(selector, scripts),
             BookPageParser(selector, scripts), TocPageParser(selector, scripts), ChapterPageParser(selector, scripts),
             selector, scripts)
+    }
+
+    private fun realFetcher(server: MockWebServer, dao: ChapterDao, enabled: Boolean = true): ChapterContentFetcher {
+        val raw = RULE_JSON.replace("https://example.test", server.url("/").toString().trimEnd('/'))
+            .replace("\"content\":\"#content\"", "\"content\":\"#content\",\"pagination\":true,\"nextPage\":\"a.next\"")
+        val engine = realSourceEngine()
+        return RuleBasedChapterContentFetcher(FakeRules(StoredSourceRule("source", raw, enabled = enabled, allowCleartext = true)),
+            ChapterPageFetcher { rule, sourceId, url, allowed, context -> engine.chapter(rule, sourceId, url, allowed, context) },
+            chapterUrls = { bookId, sourceId -> dao.getChapters(bookId, sourceId).mapNotNull { it.url } })
+    }
+
+    private suspend fun storedChapter(files: ChapterFileStore, id: String, index: Int, content: String,
+        state: String = "CACHED"): ChapterEntity {
+        val saved = files.write("book", "source", id, content)
+        return chapter(id, index).copy(localContentState = state, localFilePath = saved.relativePath,
+            contentSha256 = saved.sha256, contentBytes = saved.byteCount)
     }
 
     private fun chapter(id: String, index: Int) = ChapterEntity(

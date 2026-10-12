@@ -4,6 +4,7 @@ import com.novelradar.app.data.db.ChapterDao
 import com.novelradar.app.data.db.entity.ChapterEntity
 import com.novelradar.app.data.files.ChapterFileStore
 import com.novelradar.app.domain.model.Chapter
+import com.novelradar.app.domain.model.ChapterContentFormat
 import com.novelradar.app.domain.model.LocalContentState
 import com.novelradar.app.domain.model.SourceFailure
 import com.novelradar.app.domain.model.SourceResult
@@ -96,7 +97,9 @@ class DefaultChapterRepository(
                 val current = chapters.getChapter(chapter.bookId, chapter.sourceId, chapter.chapterId)
                 if (current == null || current.url != chapter.url) return@withLock SourceResult.Failure(SourceFailure.UnsafeRule("Chapter changed while downloading"))
                 when (val loaded = loadChapterLocked(chapter.bookId, chapter.sourceId, chapter.chapterId, prefetch = false, download = true)) {
-                    is SourceResult.Success -> SourceResult.Success(loaded.value.content.toByteArray(Charsets.UTF_8).size.toLong())
+                    is SourceResult.Success -> if (loaded.value.boundaryVerified)
+                        SourceResult.Success(loaded.value.content.toByteArray(Charsets.UTF_8).size.toLong())
+                    else SourceResult.Failure(SourceFailure.UnsafeRule("Chapter boundary is not verified"))
                     is SourceResult.Failure -> loaded
                 }
             }
@@ -125,20 +128,26 @@ class DefaultChapterRepository(
         prefetch: Boolean, download: Boolean = false): SourceResult<LoadedChapter> {
         val row = chapters.getChapter(bookId, sourceId, chapterId)
             ?: return SourceResult.Failure(SourceFailure.UnsafeRule("Chapter is not saved"))
-        val cached = try { verifiedContent(row) }
+        val currentFormat = row.contentFormatVersion == ChapterContentFormat.CURRENT
+        val local = try {
+            if (currentFormat) verifiedContent(row)
+            else row.contentSha256?.let { files.read(bookId, sourceId, chapterId, it) }
+        }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: java.io.IOException) { return SourceResult.Failure(SourceFailure.Storage("Could not read chapter storage")) }
-        if (cached != null) {
+        if (currentFormat && local != null) {
             if (download && row.localContentState != "DOWNLOADED") {
                 val url = row.url ?: return SourceResult.Failure(SourceFailure.UnsafeRule("Chapter has no URL"))
                 if (chapters.updateStoredContent(bookId, sourceId, chapterId, url, "DOWNLOADED", row.localFilePath!!,
                     row.contentSha256!!, row.contentBytes!!) == 0) return SourceResult.Failure(SourceFailure.UnsafeRule("Chapter changed while downloading"))
             }
             val origin = if (download || row.localContentState == "DOWNLOADED") ChapterOrigin.Downloaded else ChapterOrigin.Cached
-            return SourceResult.Success(LoadedChapter(row.toDomain(), cached, origin))
+            return SourceResult.Success(LoadedChapter(row.toDomain(), local, origin, boundaryVerified = true))
         }
+        val legacy = local.takeUnless { currentFormat }
         val chapterUrl = row.url?.takeIf(String::isNotBlank)
-            ?: return SourceResult.Failure(SourceFailure.UnsafeRule("Chapter has no URL"))
+            ?: return legacyFallback(row, legacy, SourceResult.Failure(SourceFailure.UnsafeRule("Chapter has no URL")),
+                permitted = !prefetch && !download)
         if (prefetch && !prefetchPermitted()) {
             return SourceResult.Failure(SourceFailure.UnsafeRule("Prefetch is disabled on this network"))
         }
@@ -146,28 +155,48 @@ class DefaultChapterRepository(
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { SourceResult.Failure(SourceFailure.Unexpected("Could not load chapter")) }
         return when (fetched) {
-            is SourceResult.Failure -> fetched
+            is SourceResult.Failure -> legacyFallback(row, legacy, fetched, permitted = !prefetch && !download)
             is SourceResult.Success -> try {
-                val saved = files.write(bookId, sourceId, chapterId, fetched.value)
+                val saved = if (legacy != null)
+                    files.writePreservingPrevious(bookId, sourceId, chapterId, fetched.value, row.contentSha256!!)
+                else files.write(bookId, sourceId, chapterId, fetched.value)
                 val changed = chapters.updateStoredContent(bookId, sourceId, chapterId, chapterUrl,
                     if (download || row.localContentState == "DOWNLOADED") "DOWNLOADED" else "CACHED",
                     saved.relativePath, saved.sha256, saved.byteCount)
                 if (changed == 0) SourceResult.Failure(SourceFailure.UnsafeRule("Chapter changed while loading"))
                 else {
                     val updated = chapters.getChapter(bookId, sourceId, chapterId)
-                    if (updated == null) SourceResult.Failure(SourceFailure.UnsafeRule("Chapter changed while loading"))
-                    else SourceResult.Success(LoadedChapter(updated.toDomain(), fetched.value, ChapterOrigin.Network))
+                    if (updated == null || !updated.sameIdentity(row) ||
+                        updated.contentFormatVersion != ChapterContentFormat.CURRENT || updated.contentSha256 != saved.sha256 ||
+                        updated.localFilePath != saved.relativePath || updated.contentBytes != saved.byteCount)
+                        SourceResult.Failure(SourceFailure.UnsafeRule("Chapter changed while loading"))
+                    else SourceResult.Success(LoadedChapter(updated.toDomain(), fetched.value, ChapterOrigin.Network, boundaryVerified = true))
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                SourceResult.Failure(SourceFailure.Storage("Could not cache chapter"))
+                legacyFallback(row, legacy, SourceResult.Failure(SourceFailure.Storage("Could not cache chapter")),
+                    permitted = !prefetch && !download)
             }
         }
     }
 
+    private suspend fun legacyFallback(row: ChapterEntity, content: String?, failure: SourceResult.Failure,
+        permitted: Boolean): SourceResult<LoadedChapter> {
+        val current = chapters.getChapter(row.bookId, row.sourceId, row.chapterId)
+        if (current == null || !current.sameIdentity(row))
+            return SourceResult.Failure(SourceFailure.UnsafeRule("Chapter changed while loading"))
+        if (!permitted || content == null) return failure
+        val origin = if (row.localContentState == "DOWNLOADED") ChapterOrigin.Downloaded else ChapterOrigin.Cached
+        return SourceResult.Success(LoadedChapter(current.toDomain(), content, origin, boundaryVerified = false))
+    }
+
+    private fun ChapterEntity.sameIdentity(other: ChapterEntity): Boolean =
+        bookId == other.bookId && sourceId == other.sourceId && chapterId == other.chapterId && url == other.url
+
     private suspend fun verifiedContent(row: ChapterEntity): String? {
-        if (row.localContentState !in setOf("CACHED", "DOWNLOADED") || row.contentSha256 == null ||
+        if (row.contentFormatVersion != ChapterContentFormat.CURRENT ||
+            row.localContentState !in setOf("CACHED", "DOWNLOADED") || row.contentSha256 == null ||
             row.localFilePath != "books/${row.bookId}/${row.sourceId}/${row.chapterId}.txt") return null
         val content = files.read(row.bookId, row.sourceId, row.chapterId, row.contentSha256) ?: return null
         return content.takeIf { row.contentBytes == it.toByteArray(Charsets.UTF_8).size.toLong() }
@@ -180,7 +209,8 @@ class DefaultChapterRepository(
             .sortedWith(compareBy(ChapterEntity::chapterIndex, ChapterEntity::chapterId))
             .take(count.coerceIn(0, MAX_PREFETCH_COUNT))) {
             if (!prefetchPermitted()) break
-            if (loadChapter(bookId, sourceId, chapter.chapterId, prefetch = true) is SourceResult.Success) loaded++
+            val result = loadChapter(bookId, sourceId, chapter.chapterId, prefetch = true)
+            if (result is SourceResult.Success && result.value.boundaryVerified) loaded++
         }
         return loaded
     }
