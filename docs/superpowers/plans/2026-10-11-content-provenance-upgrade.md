@@ -127,13 +127,13 @@ The real HTTP regression fetches only the first chapter despite a known next-cha
 
 Approved focused test files: `app/src/test/java/com/novelradar/app/feature/reader/ReadingPositionReviewTest.kt` for the pure predicate matrix, and `ReaderPositionRepairIntegrationTest.kt` in the same package for actual AtomicChapterFileStore/DefaultChapterRepository/MockWebServer-to-ViewModel repair. The predicate remains in the existing `ReaderUiState.kt`; no extra production store or helper file is required. The explicit confirmation API is `suspend fun confirmPosition(): Boolean`, routed by an `onConfirmPosition` callback through the existing serialized exact-save path.
 
-- [ ] **Step 1: Observe the false-clamping/write regression**
+- [x] **Step 1: Observe the false-clamping/write regression**
 
 Start from an old-format nonzero bookmark whose offset points into a mixed body; repair returns a smaller verified body. Assert the original persisted location is still intact after load, scroll callbacks, stop, close, rotation and failed new-chapter loading. A verified explicit chapter selection or explicit position confirmation may replace it; background caching and retry alone may not. Test legacy content with no network remains temporarily viewable with a warning, never silently marked correct. An already current-format saved position within the body restores unchanged.
 
 The existing `ReaderViewModelTest.restoresProgressOnlyForRequestedSourceAndClampsOffset` accepts automatic clamping of an out-of-range saved location. Replace that obsolete expectation with a recovery-gate assertion retaining the original persisted offset; keep separate coverage for valid CURRENT positions and other-source records. This is an intentional correction of a test that currently codifies unsafe behavior, not permission to weaken lifecycle or source ownership checks. Also cover a CURRENT saved chapter absent from the refreshed catalog: falling back to the first body cannot silently replace that persisted chapter. An explicitly requested entry absent from the catalog must remain pending with a selection/retry action, not be consumed as a successful first-chapter entry.
 
-- [ ] **Step 2: Add a retained recovery gate, not a second progress store**
+- [x] **Step 2: Add a retained recovery gate, not a second progress store**
 
 Append a `positionNeedsReview: Boolean = false` state flag. Keep the original persisted location separately in the ViewModel only for this retained session; no metadata migration rewrites it. The restore decision is explicit:
 
@@ -156,18 +156,20 @@ Show a clear existing-style recovery notice with the known old chapter/offset an
 
 This is the minimal legacy bridge; bounded multi-chapter reading and Unicode character UI remain the next phase. Add only focused helper/UI files if the existing file becomes too large, after reporting their exact responsibility to root.
 
-### Task 3 verification; quality review remains open
+### Task 3 verification and review
 
 Application commits `7067d6a58c247d441bd2662f8342b510906e20dd` and `588e7adc6b5471466cc58fa7ade784069af57c0b` contain eight scoped files. The original independent specification review found two gaps: technical recovery wording and an integration fixture bypassing the stored-rule fetcher. The second commit changes only three of those files, directly displays the unchanged original offset as “原字符位置 …（待确认）”, and routes the real HTTP integration through `RuleBasedChapterContentFetcher`, `ChapterPageFetcher` and the book/source-scoped DAO context. The same specification reviewer re-read the changes and passed Task 3.
 
 Root independently inspected the correction diff and XML: the disabled-stored-rule RED has one actual assertion failure, expected zero requests but actual one, with zero errors/skips; focused GREEN has 64 tests / three suites, all passing. Root's full milestone command exited 0 in 57 seconds (61 tasks, one executed). A separate forced unit rerun executed all 26 tasks and exited 0 in 6 minutes 35 seconds, with fresh **503 tests / 47 suites / zero failures, errors or skips**. SARIF still contains the same seven existing warnings and zero errors. The two original delivered APK SHA-256 values are unchanged. Device-test sources compiled, but no phone tests ran.
 
-The subsequent quality review is still open, investigating whether a retained trusted-chapter event can be delivered after an exact save and write during the new recovery gate. This is not yet a confirmed defect or a quality pass. Keep Task 3 and final review checkboxes open until that investigation has a documented verdict and any required correction is independently re-reviewed. A tool approval quota interruption was not bypassed; the user resumed on October 13 and the same scoped read workflow became available again.
+The subsequent independent quality review passed on October 13 with no Critical or Important findings. It investigated a possible late retained-content event rather than assuming main-thread safety: the actual Lifecycle 2.11.0/coroutines 1.11.0/Room 2.8.5 binaries, direct Main.immediate collector and generated DAO calls establish that current main-thread callbacks capture the old exact generation before Room completion invalidates it. Intentionally deferred receipt under StandardTestDispatcher alone does not demonstrate that production ordering. A suspended-save integration regression remains a Minor recommendation, to include when extending the ViewModel in the continuous-reader stage. A tool approval quota interruption was not bypassed; the user resumed on October 13 and the same scoped read workflow became available again.
 
 Root re-ran the actual in-memory migration helper on October 13: source migration SQL and schemas 4/5 preserve seven tables, eleven rows, all old columns/keys/indices, offset 77, source choice, file metadata and download checkpoints. Only the new markers initialize to zero. No new stable APK was copied.
 
+This closes provenance Task 3 and this data-protection phase only. The focused fraction-title follow-up, bounded continuous reader, character display, preparation reuse and final cumulative APK verification still remain; the user's complete repair is not yet delivered.
+
 ## Final verification and handoff
 
-- [ ] Run all focused RED/GREEN cycles, then the full four-task milestone command with the established offline/no-daemon/in-process flags; read actual XML and SARIF counts. Verify generated v5 schema and non-destructive migration data independently; compiled Android migration/UI tests are not runtime proof.
-- [ ] Self-review, `git diff --check`, stage exact app/test/schema files only, and commit. Release writer/Gradle ownership after every process has exited. Root independently verifies and requests specification then quality review; fix/re-review any issues before the continuous-reading stage.
-- [ ] Do not copy or advertise a new stable APK until all current repair stages are integrated. Preserve both existing delivered APK files, icon, app palette and signing identity.
+- [x] Run all focused RED/GREEN cycles, then the full four-task milestone command with the established offline/no-daemon/in-process flags; read actual XML and SARIF counts. Verify generated v5 schema and non-destructive migration data independently; compiled Android migration/UI tests are not runtime proof.
+- [x] Self-review, `git diff --check`, stage exact app/test/schema files only, and commit. Release writer/Gradle ownership after every process has exited. Root independently verifies and requests specification then quality review; fix/re-review any issues before the continuous-reading stage.
+- [x] Do not copy or advertise a new stable APK until all current repair stages are integrated. Preserve both existing delivered APK files, icon, app palette and signing identity.

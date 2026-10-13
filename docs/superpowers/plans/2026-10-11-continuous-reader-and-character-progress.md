@@ -146,6 +146,8 @@ Run all four milestone tasks, read XML/SARIF and self-review; commit exact scope
 
 Extend existing tests rather than replacing them. Cover preparation of chapter two without changing `content`, `offset`, catalog or persisted progress; an accepted visible event for verified chapter two changes all of those together. Test first/last chapter, forward/backward events, unknown/unloaded chapter IDs, stale layout/selection callbacks, restoration/font/mode changes, loading/saving failures, close/stop races, legacy recovery gate, retry target and no automatic source switch.
 
+Also retain a controlled integration case in which the old trusted exact save is suspended and the retained old chapter scrolls before an unverified replacement arrives. The Task 3 quality reviewer found no production defect in the actual Main.immediate ordering, but recommended documenting that generation/collector ordering as the continuous coordinator evolves. Use the real progress repository and low-level storage synchronization, not a mocked debounce result or an artificial high-level collector claimed to prove phone behavior.
+
 Typed events carry the real chapter ID and UTF-16 offset:
 
 ```kotlin
