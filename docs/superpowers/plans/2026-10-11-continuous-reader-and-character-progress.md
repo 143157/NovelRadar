@@ -12,7 +12,7 @@
 
 ## Dependency and execution boundary
 
-This is the next phase of the user-approved repair design, not a new product-design checkpoint. The original source boundary repair and provenance Tasks 1 and 2 have passed independent specification and quality review. **Do not implement this plan until provenance Task 3 passes both reviews and the focused `2026-10-12-explicit-fraction-page-suffix.md` follow-up is verified and reviewed.** Re-read their final interfaces before dispatching these tasks and adjust this document if needed; never bypass `positionNeedsReview` to enable continuity.
+This is the next phase of the user-approved repair design, not a new product-design checkpoint. Its dependencies are complete: original source repair, provenance Tasks 1–3 and the focused `2026-10-12-explicit-fraction-page-suffix.md` follow-up have passed independent specification then quality review. Root's latest fresh full unit run has 506 tests / 47 suites with zero failures/errors/skips. Re-read their final interfaces before dispatching these tasks and adjust this document if needed; never bypass `positionNeedsReview` to enable continuity.
 
 Use a fresh implementer for each task, then specification review followed by quality review. Only one app/test writer and one Gradle owner at a time. Root writes documentation only. No stable APK is published between partial stages. No changes to source boundary rules, chapter IDs, book identities, migration schemas, download task generations, network protection, selected icon or palette.
 

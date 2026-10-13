@@ -13,7 +13,7 @@
 ## Overall repair checklist
 
 - [x] Correct network chapter boundaries (this plan; long-title audit fix independently verified and reviewed).
-- [ ] Independently repair/review the newly demonstrated explicit `（第1/2页）` suffix gap, using `2026-10-12-explicit-fraction-page-suffix.md`, before continuous reader implementation.
+- [x] Independently repair/review the newly demonstrated explicit `（第1/2页）` suffix gap, using `2026-10-12-explicit-fraction-page-suffix.md`, before continuous reader implementation (commit `102b4fd`, fresh 506 tests, both reviews passed).
 - [x] Distinguish legacy mixed content and preserve old positions/files during repair (provenance Tasks 1–3 independently verified and reviewed).
 - [ ] Implement bounded continuous reading in both modes, actual-visible-chapter progress and Unicode character-count display.
 - [ ] Keep upcoming two-chapter caching automatic, reuse in-flight requests and validate request-count performance.

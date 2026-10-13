@@ -24,7 +24,7 @@ First finish the pending position-recovery specification/quality reviews and roo
 - Test: `app/src/test/java/com/novelradar/app/source/parse/ChapterPageBoundaryTest.kt`.
 - Test: `app/src/test/java/com/novelradar/app/source/SourceEngineTest.kt`.
 
-- [ ] **Step 1: Add the actual engine regression before changing production code**
+- [x] **Step 1: Add the actual engine regression before changing production code**
 
 The existing `withServer`, `html`, `paginatedChapterRule` and `engine` fixtures exercise real parsing and local HTTP. Add this test; do not replace existing plain-fraction or next-chapter tests:
 
@@ -51,7 +51,7 @@ The existing `withServer`, `html`, `paginatedChapterRule` and `engine` fixtures 
 }
 ```
 
-- [ ] **Step 2: Observe behavioral RED and add focused identity assertions**
+- [x] **Step 2: Observe behavioral RED and add focused identity assertions**
 
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest --tests 'com.novelradar.app.source.SourceEngineTest.explicitFractionPagesRetainContentWithoutRequestingNextChapter' --offline --no-daemon '-Pkotlin.incremental=false' '-Pkotlin.compiler.execution.strategy=in-process' --console=plain
@@ -83,7 +83,7 @@ Add these assertions to the existing helper suite, run them against the unchange
 }
 ```
 
-- [ ] **Step 3: Extend only the fraction suffix branch and verify GREEN**
+- [x] **Step 3: Extend only the fraction suffix branch and verify GREEN**
 
 Preserve whitespace filtering before matching, NFKC normalization, locale handling and all bracket/Chinese-page behavior. Change only the fraction alternative from `\d+\s*/\s*\d+` to `第?\s*\d+\s*/\s*\d+\s*页?`:
 
@@ -99,7 +99,7 @@ Do not strip arbitrary parenthesized numbers, subtitles or non-trailing text, gu
 
 Expected GREEN: all assertions pass, including the existing long-interior-whitespace bound, legitimate plain fractions, ambiguous titles and exact aggregate UTF-8 limits. Save fresh focused XML under `app/build/fraction-page-evidence/green-focused/`.
 
-- [ ] **Step 4: Verify fully, self-review, commit and release ownership**
+- [x] **Step 4: Verify fully, self-review, commit and release ownership**
 
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:compileDebugAndroidTestSources --offline --no-daemon '-Pkotlin.incremental=false' '-Pkotlin.compiler.execution.strategy=in-process' --console=plain
@@ -110,8 +110,18 @@ git commit -m "fix: preserve explicit fraction chapter pages"
 
 Record actual exit codes, XML test/suite/failure/error/skip totals, unchanged seven existing lint warnings and zero errors. Commit only the three declared files after verification. Release writer/build ownership after every process exits. No stable APK copy or device-runtime claim.
 
-- [ ] **Step 5: Independent root verification, specification then quality review**
+- [x] **Step 5: Independent root verification, specification then quality review**
 
 Root inspects the real RED/GREEN, cumulative three-file diff and reruns full milestone/forced units. Independent specification review verifies the exact input format, complete first-chapter content and zero next-chapter requests; subsequent quality review checks the minimal expression and retained fail-closed semantics. Fix and re-review required findings before returning to Task 1 of `2026-10-11-continuous-reader-and-character-progress.md`.
 
 For this inter-task forced run, the actual Gradle task supports `:app:testDebugUnitTest --rerun` with the established flags: rerun all unit tests, not unchanged compilation prerequisites. Root checked its real task help on October 13. Final cumulative repair verification still forces all prerequisites with `--rerun-tasks` before delivery.
+
+## Completion evidence (October 13)
+
+Implementation `102b4fdfb3bec66fcb6d0830edb4c221379840fa` has exact parent `1162a2584fd39dabeb6bceb21b56ff83d6fb2d45`, preserving root's documentation. Its three-file diff is 43 insertions / one deletion: one production regex line and three additive tests. The source engine, parser, identities, cache format, schemas, reader, icon and signing are untouched.
+
+Root independently read archived evidence at ignored `app/build/fraction-page-evidence/`: HTTP RED one test / one actual content assertion failure (expected both paragraphs, actual only `首段`); helper RED two tests / two actual assertions, all zero errors/skips. Focused GREEN is ten boundary tests plus 39 engine tests, total 49, with zero failures/errors/skips. The implementation full milestone run exited 0 in 1 minute 9 seconds, with 506 tests / 47 suites and zero failures/errors/skips.
+
+After explicit writer/build handoff, root independently ran the four milestone tasks: exit 0 in nine seconds, 61 tasks, one executed and 60 up-to-date. Root then used the verified task-specific `--rerun`: exit 0 in 20 seconds, actual test task executed, 25 unchanged compilation prerequisites reused. Newly read XML contains **506 tests / 47 suites / zero failures, errors or skips**. SARIF retains seven existing warnings and zero errors, including rule-default severity where no result level is present. Whitespace checks and worktree are clean; root re-read the full hashes of both original delivered APKs, unchanged.
+
+Independent specification review then quality review both passed with no findings. The real HTTP regression returns the full first chapter and only the first two expected request paths; the known second catalog chapter is not requested. All Gradle processes have exited. No stable APK was copied and no device runtime is claimed. This closes only the fraction follow-up; return to continuous-reader Task 1 before the user's final repair test APK.
