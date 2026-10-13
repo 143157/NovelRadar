@@ -46,6 +46,26 @@ class ChapterPageBoundaryTest {
             .forEach { assertThat(boundary.sameChapterTitle("第一章", it)).isTrue() }
     }
 
+    @Test fun explicitFractionSuffixesKeepTheNamedChapterIdentity() {
+        val boundary = ChapterPageBoundary("https://books.example.test/1")
+
+        listOf("第一章（第1/2页）", "第一章 (第 2 / 2 页)", "第一章【2/2页】", "第一章[第2/2]", "第一章（第２／２页）")
+            .forEach { assertThat(boundary.sameChapterTitle("第一章", it)).isTrue() }
+        assertThat(boundary.sameChapterTitle("第一章（第1/2页）", "第一章（第2/2页）")).isTrue()
+    }
+
+    @Test fun fractionPagesDoNotEraseChapterNumbersSubtitlesOrGenericIdentity() {
+        val boundary = ChapterPageBoundary("https://books.example.test/1")
+
+        assertThat(boundary.sameChapterTitle("第一章（第1/2页）", "第二章（第2/2页）")).isFalse()
+        assertThat(boundary.sameChapterTitle("第一章（一）", "第一章（二）")).isFalse()
+        assertThat(boundary.sameChapterTitle("第一章（相遇）", "第一章（重逢）")).isFalse()
+        listOf("正文（第1/2页）", "章节（第2/2页）", "（第1/2页）").forEach {
+            assertThat(boundary.isKnownTitle(it)).isFalse()
+            assertThat(boundary.sameChapterTitle(it, it)).isFalse()
+        }
+    }
+
     @Test fun uniqueTitlesWithoutChapterNumbersCanProveContinuation() {
         val boundary = ChapterPageBoundary("https://books.example.test/1")
 

@@ -87,6 +87,28 @@ class SourceEngineTest {
         assertThat(server.requestCount).isEqualTo(3)
     }
 
+    @Test fun explicitFractionPagesRetainContentWithoutRequestingNextChapter() = withServer { server ->
+        server.enqueue(html("<h1>第一章（第1/2页）</h1><div id=content>首段</div>" +
+            "<a class=next href='/page/2'>下一页</a>"))
+        server.enqueue(html("<h1>第一章（第2/2页）</h1><div id=content>尾段</div>" +
+            "<a class=next href='/chapter/2#body'>下一页</a>"))
+        server.enqueue(html("<h1>第二章</h1><div id=content>不可合并</div>"))
+        val result = runBlocking { withTimeout(10_000) {
+            engine().chapter(paginatedChapterRule(server), "source-1",
+                server.url("/chapter/1").toString(), allowCleartext = true,
+                context = ChapterRequestContext(setOf(server.url("/chapter/1").toString(),
+                    server.url("/chapter/2#catalog").toString())))
+        } }
+
+        assertThat(result).isInstanceOf(SourceResult.Success::class.java)
+        val page = (result as SourceResult.Success).value
+        assertThat(page.content).isEqualTo("首段\n\n尾段")
+        assertThat(page.title).isEqualTo("第一章（第1/2页）")
+        assertThat(server.requestCount).isEqualTo(2)
+        assertThat(server.takeRequest(1, TimeUnit.SECONDS)!!.path).isEqualTo("/chapter/1")
+        assertThat(server.takeRequest(1, TimeUnit.SECONDS)!!.path).isEqualTo("/page/2")
+    }
+
     @Test fun uniqueUnnumberedChapterTitleCanContinueAcrossPages() = withServer { server ->
         server.enqueue(html("<h1>序章</h1><div id=content>首段</div><a class=next href='/page/2'>下一页</a>"))
         server.enqueue(html("<h1>序章 (2/2)</h1><div id=content>尾段</div>"))

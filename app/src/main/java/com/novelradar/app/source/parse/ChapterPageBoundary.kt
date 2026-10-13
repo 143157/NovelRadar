@@ -35,7 +35,7 @@ class ChapterPageBoundary(initialUrl: String, context: ChapterRequestContext = C
             .filterNot(Char::isWhitespace).replace(PAGE_SUFFIX, "").lowercase(Locale.ROOT)
 
     private companion object {
-        val PAGE_SUFFIX = Regex("""\s*[\(\[【]\s*(?:\d+\s*/\s*\d+|第?\s*[0-9零〇一二三四五六七八九十百千万]+\s*页)\s*[\)\]】]\s*$""")
+        val PAGE_SUFFIX = Regex("""\s*[\(\[【]\s*(?:第?\s*\d+\s*/\s*\d+\s*页?|第?\s*[0-9零〇一二三四五六七八九十百千万]+\s*页)\s*[\)\]】]\s*$""")
         val PAGE_ONLY = Regex("(?:第?[0-9零〇一二三四五六七八九十百千万]+页|page[0-9]+)")
         val GENERIC_TITLES = setOf("正文", "章节", "内容", "小说", "chapter", "content")
         val NEXT_CHAPTER_LABELS = listOf("下一章", "下章", "下一回", "nextchapter")
