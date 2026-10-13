@@ -113,3 +113,5 @@ Record actual exit codes, XML test/suite/failure/error/skip totals, unchanged se
 - [ ] **Step 5: Independent root verification, specification then quality review**
 
 Root inspects the real RED/GREEN, cumulative three-file diff and reruns full milestone/forced units. Independent specification review verifies the exact input format, complete first-chapter content and zero next-chapter requests; subsequent quality review checks the minimal expression and retained fail-closed semantics. Fix and re-review required findings before returning to Task 1 of `2026-10-11-continuous-reader-and-character-progress.md`.
+
+For this inter-task forced run, the actual Gradle task supports `:app:testDebugUnitTest --rerun` with the established flags: rerun all unit tests, not unchanged compilation prerequisites. Root checked its real task help on October 13. Final cumulative repair verification still forces all prerequisites with `--rerun-tasks` before delivery.

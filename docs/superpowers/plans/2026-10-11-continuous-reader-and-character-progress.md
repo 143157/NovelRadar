@@ -248,6 +248,8 @@ Deliver the clickable absolute APK path and a concise phone checklist: both mode
 
 Expected: exit 0; read current XML counts with zero failures/errors/skips, and SARIF actual severities. The seven existing warnings are not errors or permission to introduce new ones. Forced unit verification is independent of cached task results. Only the named Gradle owner runs these commands.
 
+For independent checks between tasks, after the implementer's full milestone build, root may force the test task itself with `:app:testDebugUnitTest --rerun` and the same established offline/no-daemon/in-process flags. Root verified this option in the actual current Gradle task help on October 13; it executes the entire unit suite again while retaining unchanged compiled prerequisites. This is not `--test-dry-run`. The final cumulative check still uses the `--rerun-tasks` command above to rebuild all prerequisites as well. Read the exit code and newly written XML in both cases; cached test output alone is not a new test execution.
+
 - [ ] No legacy gate bypass, lost old hash/offset or destructive migration.
 - [ ] No background-preparation progress writes; one actual chapter/offset for both modes, catalog and persisted record.
 - [ ] Window/jobs bounded; settings and real network policy respected; one in-flight fetch reused.
