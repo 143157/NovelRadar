@@ -32,11 +32,17 @@ import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Rule
@@ -187,7 +193,7 @@ class DefaultChapterRepositoryTest {
         }
     }
 
-    @Test fun preparationRechecksNetworkPolicyAfterWaitingForChapterLock() = runBlocking {
+    @Test(timeout = 15_000) fun preparationRechecksNetworkPolicyAfterWaitingForChapterLock() = boundedPreparationTest {
         val files = AtomicChapterFileStore(temporary.root.toPath())
         for (hasLegacy in listOf(false, true)) {
             val id = if (hasLegacy) "legacy" else "missing"
@@ -200,23 +206,24 @@ class DefaultChapterRepositoryTest {
             val repository = DefaultChapterRepository(dao, files, {
                 fetches++; entered.complete(Unit); release.await(); SourceResult.Failure(SourceFailure.Timeout)
             }, isMeteredNetwork = { metered })
-            val foreground = async { repository.loadChapter("book", "source", id) }
-            withTimeout(2_000) { entered.await() }
-            val preparing = async(start = CoroutineStart.UNDISPATCHED) { repository.prepareChapter("book", "source", id) }
             try {
+                val foreground = async { repository.loadChapter("book", "source", id) }
+                withTimeout(2_000) { entered.await() }
+                val preparing = async(start = CoroutineStart.UNDISPATCHED) { repository.prepareChapter("book", "source", id) }
                 assertThat(preparing.isCompleted).isFalse()
                 metered = true
                 release.complete(Unit)
 
                 assertThat(preparing.await()).isEqualTo(
                     SourceResult.Failure(SourceFailure.UnsafeRule("Prefetch is disabled on this network")))
+                foreground.await()
                 assertThat(fetches).isEqualTo(1)
                 assertThat(dao.getChapter("book", "source", id)).isEqualTo(row)
-            } finally { release.complete(Unit); foreground.await(); preparing.await() }
+            } finally { release.complete(Unit) }
         }
     }
 
-    @Test fun preparationAndForegroundLoadShareOneFetchAndVerifiedHashInEitherOrder() = runBlocking {
+    @Test(timeout = 15_000) fun preparationAndForegroundLoadShareOneFetchAndVerifiedHashInEitherOrder() = boundedPreparationTest {
         val files = AtomicChapterFileStore(temporary.root.toPath())
         for (prepareFirst in listOf(false, true)) {
             val id = if (prepareFirst) "prepare-first" else "foreground-first"
@@ -227,11 +234,11 @@ class DefaultChapterRepositoryTest {
             val repository = DefaultChapterRepository(dao, files, {
                 fetches++; entered.complete(Unit); release.await(); SourceResult.Success("单章正文😀")
             }, isMeteredNetwork = { false })
-            val first = async(start = CoroutineStart.UNDISPATCHED) {
-                if (prepareFirst) repository.prepareChapter("book", "source", id)
-                else repository.loadChapter("book", "source", id)
-            }
             try {
+                val first = async(start = CoroutineStart.UNDISPATCHED) {
+                    if (prepareFirst) repository.prepareChapter("book", "source", id)
+                    else repository.loadChapter("book", "source", id)
+                }
                 assertThat(withTimeoutOrNull(2_000) { entered.await() }).isNotNull()
                 val second = async(start = CoroutineStart.UNDISPATCHED) {
                     if (prepareFirst) repository.loadChapter("book", "source", id)
@@ -250,11 +257,11 @@ class DefaultChapterRepositoryTest {
                 assertThat(current.contentFormatVersion).isEqualTo(ChapterContentFormat.CURRENT)
                 assertThat(files.read("book", "source", id, current.contentSha256)).isEqualTo("单章正文😀")
                 assertThat(current.contentBytes).isEqualTo("单章正文😀".toByteArray(Charsets.UTF_8).size.toLong())
-            } finally { release.complete(Unit); first.await() }
+            } finally { release.complete(Unit) }
         }
     }
 
-    @Test fun cachedPreparationDoesNotWaitForAnotherStalledChapterFetch() = runBlocking {
+    @Test(timeout = 15_000) fun cachedPreparationDoesNotWaitForAnotherStalledChapterFetch() = boundedPreparationTest {
         val files = AtomicChapterFileStore(temporary.root.toPath())
         val cached = storedChapter(files, "cached", 0, "缓存正文").copy(contentFormatVersion = ChapterContentFormat.CURRENT)
         val dao = FakeChapterDao(cached, chapter("stalled", 1))
@@ -264,8 +271,8 @@ class DefaultChapterRepositoryTest {
             assertThat(row.chapterId).isEqualTo("stalled")
             entered.complete(Unit); release.await(); SourceResult.Success("网络正文")
         }, isMeteredNetwork = { false })
-        val stalled = async(start = CoroutineStart.UNDISPATCHED) { repository.prepareChapter("book", "source", "stalled") }
         try {
+            val stalled = async(start = CoroutineStart.UNDISPATCHED) { repository.prepareChapter("book", "source", "stalled") }
             assertThat(withTimeoutOrNull(2_000) { entered.await() }).isNotNull()
             val result = withTimeoutOrNull(2_000) { repository.prepareChapter("book", "source", "cached") }
             assertThat(result).isNotNull()
@@ -275,10 +282,12 @@ class DefaultChapterRepositoryTest {
             assertThat(loaded.boundaryVerified).isTrue()
             assertThat(stalled.isCompleted).isFalse()
             assertThat(dao.getChapter("book", "source", "cached")).isEqualTo(cached)
-        } finally { release.complete(Unit); stalled.await() }
+            release.complete(Unit)
+            stalled.await()
+        } finally { release.complete(Unit) }
     }
 
-    @Test fun queuedPreparationIsRejectedAfterBookDeletionStartsWithoutResurrectingFiles() = runBlocking {
+    @Test(timeout = 15_000) fun queuedPreparationIsRejectedAfterBookDeletionStartsWithoutResurrectingFiles() = boundedPreparationTest {
         val leases = com.novelradar.app.data.download.BookDownloadLeases()
         val files = AtomicChapterFileStore(temporary.root.toPath())
         val dao = FakeChapterDao(chapter("one", 0))
@@ -288,10 +297,10 @@ class DefaultChapterRepositoryTest {
         val repository = DefaultChapterRepository(dao, files, {
             fetches++; entered.complete(Unit); release.await(); SourceResult.Success("正文")
         }, isMeteredNetwork = { false }, contentLeases = leases)
-        val foreground = async { repository.loadChapter("book", "source", "one") }
-        withTimeout(2_000) { entered.await() }
-        val preparing = async(start = CoroutineStart.UNDISPATCHED) { repository.prepareChapter("book", "source", "one") }
         try {
+            val foreground = async { repository.loadChapter("book", "source", "one") }
+            withTimeout(2_000) { entered.await() }
+            val preparing = async(start = CoroutineStart.UNDISPATCHED) { repository.prepareChapter("book", "source", "one") }
             assertThat(preparing.isCompleted).isFalse()
             val cleaner = com.novelradar.app.data.files.LocalChapterCleaner(files, dao::clearStoredMetadata)
             val deletion = async(start = CoroutineStart.UNDISPATCHED) {
@@ -307,7 +316,23 @@ class DefaultChapterRepositoryTest {
             assertThat(fetches).isEqualTo(1)
             assertThat(files.read("book", "source", "one")).isNull()
             assertThat(dao.getChapter("book", "source", "one")!!.localContentState).isEqualTo("NOT_STORED")
-        } finally { release.complete(Unit); foreground.await(); preparing.await() }
+        } finally { release.complete(Unit) }
+    }
+
+    private fun boundedPreparationTest(block: suspend CoroutineScope.() -> Unit) = runBlocking {
+        withTimeout(10_000) {
+            coroutineScope {
+                try {
+                    block()
+                } finally {
+                    val children = coroutineContext[Job]!!.children.toList()
+                    children.forEach { it.cancel() }
+                    withContext(NonCancellable) {
+                        withTimeout(2_000) { children.joinAll() }
+                    }
+                }
+            }
+        }
     }
 
     @Test fun preparationRetainsExpectedUrlGuardWhenCatalogChangesDuringFetch() = runBlocking {
