@@ -47,7 +47,7 @@ data class ChapterReadingPosition(val chapterId: String, val offset: Int)
 
 data class ChapterCharacterProgress(val read: Int, val total: Int) {
     val percent: Int get() = if (total == 0) 0 else
-        (read.toLong() * 100 / total).toInt().coerceIn(0, 100)
+        (read.toLong() * 100 / total).coerceIn(0L, 100L).toInt()
 }
 
 fun chapterCharacterProgress(text: String, utf16Offset: Int): ChapterCharacterProgress {
@@ -59,6 +59,8 @@ fun chapterCharacterProgress(text: String, utf16Offset: Int): ChapterCharacterPr
 ```
 
 The code above defines the display contract, not a new persistence format. It may serve as a small-input/reference function; UI must not call its full count repeatedly. Add a pure sparse `ChapterCharacterIndex` in the same focused file, memoized by immutable body identity. Its total is computed once, and each position lookup scans at most one 256-unit block (257 when its boundary crosses a surrogate pair). This adds roughly one Int per 256 UTF-16 units, not a whole-book word index or an array per character.
+
+During Task 1, the implementer identified that converting the Long quotient before clamping can wrap for a directly constructed `ChapterCharacterProgress(Int.MAX_VALUE, 1)`. Keep the bounded-display test and clamp on Long first as shown above; valid reference/index outputs remain unchanged. This is a defensive arithmetic correction, not new persistence validation or a change to stored offsets.
 
 ```kotlin
 class ChapterCharacterIndex(private val text: String) {
