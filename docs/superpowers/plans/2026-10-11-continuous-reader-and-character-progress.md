@@ -38,7 +38,7 @@ All paths above are under `app/src/main/java/com/novelradar/app/`. Tests live un
 
 **Tests:** create `app/src/test/java/com/novelradar/app/feature/reader/ChapterReadingProgressTest.kt` and `ReadingWindowPolicyTest.kt`; extend the existing `data/repository/DefaultChapterRepositoryTest.kt` for the real preparation operation.
 
-- [ ] **Step 1: Add and observe failing contracts before implementing them**
+- [x] **Step 1: Add and observe failing contracts before implementing them**
 
 Use independent assertions for Unicode conversion, valid UTF-16 bounds and bounded catalog neighbors. For example, `"甲😀乙\n"` has five UTF-16 units but four displayed characters. At offset three, two displayed characters have been read. An offset inside the surrogate pair must not count half an emoji; normalize the display prefix to before that pair without changing stored offsets. Empty content has zero read/total and zero percent, not a division error. Include punctuation, blank lines, supplementary characters, negative/oversized input, reordered/non-contiguous catalog indices and first/last chapter.
 
@@ -112,7 +112,7 @@ Run focused tests with the established flags. Expected RED is an assertion expos
 .\gradlew.bat :app:testDebugUnitTest --tests 'com.novelradar.app.feature.reader.ChapterReadingProgressTest' --tests 'com.novelradar.app.feature.reader.ReadingWindowPolicyTest' --tests 'com.novelradar.app.data.repository.DefaultChapterRepositoryTest' --offline --no-daemon '-Pkotlin.incremental=false' '-Pkotlin.compiler.execution.strategy=in-process' --console=plain
 ```
 
-- [ ] **Step 2: Add a fail-closed verified preparation operation**
+- [x] **Step 2: Add a fail-closed verified preparation operation**
 
 Append this operation to `ChapterRepository`, with the default returning a typed failure so older simple doubles cannot silently issue ordinary network loads:
 
@@ -125,7 +125,7 @@ The real repository delegates to its existing protected `prefetch = true` path a
 
 Tests must use the actual repository and atomic store for cache/policy behavior, including preparation racing a foreground request for the same chapter: one fetch, both see verified data, no progress writes. Preserve cancellation and book deletion barriers. Do not add repository-global network locks or change downloader limits.
 
-- [ ] **Step 3: Implement the bounded neighbor policy and verify GREEN**
+- [x] **Step 3: Implement the bounded neighbor policy and verify GREEN**
 
 Order actual catalog entries by index then ID, not by assuming chapter indices are dense. The retained window contains at most the previous chapter, active chapter, and next two chapters: four bodies maximum, each still subject to the existing body bounds. Only already-loaded/verified candidates are retained; a missing neighbor is not a fake loaded chapter. The active chapter must never be evicted. User prefetch setting limits speculative forward preparation to zero, one or two; it does not forbid a deliberate read into the next chapter.
 
@@ -139,9 +139,21 @@ fun readingWindowIds(catalog: List<Chapter>, activeChapterId: String): Set<Strin
 }
 ```
 
-- [ ] **Step 4: Full verification, explicit commit and independent reviews**
+- [x] **Step 4: Full verification, explicit commit and independent reviews**
 
 Run all four milestone tasks, read XML/SARIF and self-review; commit exact scoped production/test files. Release all writer/build ownership only after processes exit. Root independently verifies and requests both reviews before Task 2.
+
+### Task 1 verification and review
+
+Implementation `e4ca85f9ea695a368bb0b915aecf16f28376f608` has parent `8840c097ab4dc682efa79e1a8b3cbea3b5b1842e` and changes exactly seven declared files. The preparation operation reuses the existing protected path; source rules, current/legacy cache guards, schema, downloader, progress store and UI are unchanged. The sparse Unicode index and deterministic at-most-four ID policy are pure infrastructure, not yet visible reader behavior.
+
+Root independently read the four production files, two pure test files and full new repository-test diff. Ignored `app/build/continuous-task1-evidence/` records pure RED: 60 tests / three suites / 15 assertion failures with existing 42 repository tests green; expanded RED: 73 / three / 26 assertions (11 repository, 15 pure), all zero errors/skips. Focused GREEN is 73 tests (55 repository, nine progress, nine window), zero failures/errors/skips. The implementation full milestone run exited 0 in 53 seconds, with **537 tests / 49 suites / zero failures, errors or skips** and seven existing lint warnings, zero errors. Root independently ran Full4 (exit 0, seven seconds, 61 tasks/one executed) and the actual whole unit task `--rerun` (exit 0, 16 seconds, one test task executed with 25 unchanged compilation prerequisites reused); fresh XML also contains 537 / 49 / all zero.
+
+Specification review passed. Quality review found one Important test-only issue: four newly added race tests had unbounded result/cleanup waits. Commit `402c0e21f239d30f2f3413e4754c34dae3b00bb4`, parent `e4ca85f`, changes only that test file (+44/−19). It keeps all scenarios/assertions while owning async children inside a ten-second structured scope, releasing gates in finally before any spawn/signal failure can escape, canceling remaining jobs and joining under a separate two-second NonCancellable cleanup bound. Four fifteen-second JUnit fuses provide an outer limit. Unrelated old tests and all production code remain untouched.
+
+The repair's focused 55 tests and full 537 / 49 both pass; root independently repeated Full4 (exit 0, seven seconds) and actual unit `--rerun` (exit 0, 16 seconds), again fresh 537 / 49 / all zero. SARIF effective severities remain seven warnings and zero errors. Root directly read the test-only delta and confirmed the debug build SHA-256 stays `1BC71A36F9DA6E1E01161939851C90BB19B55FEBFDFA46418AC13742362DF4A3`, identical to the pre-repair artifact. The same specification reviewer confirmed cumulative scope and the same quality reviewer closed the finding, reporting no Critical, Important or Minor issues.
+
+All known tool/Gradle sessions have ended and ownership returned to root; the resume check found no matching build processes. Previous stable APKs were not overwritten, no new stable deliverable was copied, and no device test ran. This closes Task 1 only; execute Task 2's actual visible-state/job coordinator before UI integration and final repair packaging.
 
 ## Task 2: Visible chapter state, bounded continuation and request reuse
 
@@ -160,6 +172,8 @@ fun continueBackward(positionVersion: Int)
 ```
 
 The implementation checks the retained session, version, book/source ownership and actual verified window membership. An active recovery gate cannot be cleared or written by any automatic visible/continuation event. Manual selection and explicit confirmation keep the separately reviewed recovery semantics.
+
+Keep presentation and the recovery policy consistent: if automatic cross-chapter events are rejected while review is pending, present only the active body until explicit confirmation. Do not expose a different verified neighbor under the old active title/catalog. Prepared data may remain retained without being displayed or counted as read; legacy fallback stays outside the trusted window.
 
 - [ ] **Step 2: Keep loading state separate from active reading state**
 
@@ -211,6 +225,8 @@ val label = "${shown.read} / ${shown.total} 字 · 本章 ${shown.percent}% · "
 ```
 
 Memoize character counts appropriately. Hide precise character percentages for unverified legacy content or a pending position review, retaining the existing recovery notice/actions. Page number may remain as supplementary layout information; it is not persisted character progress. No exact whole-book character percentage from partial caches.
+
+Apply the Task 2 recovery presentation policy to both modes: a pending gate that rejects cross-chapter events must not render a neighboring chapter as though it were still the active chapter. Clearing it explicitly may reveal already-prepared neighbors without restarting restoration or moving the anchor.
 
 - [ ] **Step 5: Full verification, explicit commit and independent reviews**
 
