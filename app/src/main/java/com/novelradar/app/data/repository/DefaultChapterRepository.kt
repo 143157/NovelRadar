@@ -112,6 +112,9 @@ class DefaultChapterRepository(
     override suspend fun loadChapter(bookId: String, sourceId: String, chapterId: String): SourceResult<LoadedChapter> =
         loadChapter(bookId, sourceId, chapterId, prefetch = false)
 
+    override suspend fun prepareChapter(bookId: String, sourceId: String, chapterId: String): SourceResult<LoadedChapter> =
+        loadChapter(bookId, sourceId, chapterId, prefetch = true)
+
     private suspend fun loadChapter(bookId: String, sourceId: String, chapterId: String,
         prefetch: Boolean): SourceResult<LoadedChapter> =
         try {
@@ -209,7 +212,7 @@ class DefaultChapterRepository(
             .sortedWith(compareBy(ChapterEntity::chapterIndex, ChapterEntity::chapterId))
             .take(count.coerceIn(0, MAX_PREFETCH_COUNT))) {
             if (!prefetchPermitted()) break
-            val result = loadChapter(bookId, sourceId, chapter.chapterId, prefetch = true)
+            val result = prepareChapter(bookId, sourceId, chapter.chapterId)
             if (result is SourceResult.Success && result.value.boundaryVerified) loaded++
         }
         return loaded
