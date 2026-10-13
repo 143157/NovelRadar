@@ -30,6 +30,7 @@ The user requested a test APK first once this repair is complete. Complete and r
 - `ReaderScreen.kt` / `ReaderControls.kt` / `app/NovelRadarApp.kt`: route the typed position/continuation events, show chapter progress and locate the current catalog row.
 - `feature/book/BookDetailUiState.kt` / `BookDetailViewModel.kt` / `BookDetailScreen.kt`: observe the existing persisted location and mark the same-source current chapter.
 - `feature/library/LibraryUiState.kt` / `LibraryScreen.kt`: retain existing subscription, label chapter position honestly instead of implying exact whole-book character completion.
+- `data/db/BookDao.kt` / `ShelfProjection.kt`, `domain/repository/BookRepository.kt`, `data/repository/RoomBookRepository.kt` in Task 4 only: expose the nullable actual catalog ordinal of the saved same-source chapter as a read projection. This is not an entity/schema/migration change or a second progress store.
 
 All paths above are under `app/src/main/java/com/novelradar/app/`. Tests live under their existing mirrored `app/src/test/java/` or `app/src/androidTest/java/` packages. A focused HTTP/reader integration test may be added under the reader test package; announce its exact path and responsibility first.
 
@@ -227,9 +228,31 @@ val currentChapterId: String? get() = readingLocation
 
 Tests cover reader-updated chapter reflected without pressing next again, same-source identity, source switch excluding another source's position, absent/legacy records, search/order changes retaining the actual marker and source write ordering unchanged. Library already observes the shelf projection; exercise real progress-to-shelf mapping and ensure preparation alone does not move its display.
 
+Root checked the actual shelf query and model: they currently derive position from the saved raw `chapterIndex`, which can be stale or outside a refreshed catalog. Do not clamp that into a fake 100%, show “9 / 3”, or assume non-contiguous indices are ordinal positions. Append `val readingChapterPosition: Int? = null` to both `ShelfProjection` and `ShelfBook`, and explicitly map it in `RoomBookRepository.observeShelf`. The existing Room query keeps its counts, chosen-source fallback and all old aliases, and adds this read-only join/column:
+
+```sql
+CASE WHEN current_chapter.chapterId IS NOT NULL THEN (
+    SELECT COUNT(*) FROM chapters position_chapter
+    WHERE position_chapter.bookId = b.bookId AND position_chapter.sourceId = bs.sourceId
+      AND (position_chapter.chapterIndex < current_chapter.chapterIndex
+        OR (position_chapter.chapterIndex = current_chapter.chapterIndex
+          AND position_chapter.chapterId <= current_chapter.chapterId))
+) ELSE NULL END AS readingChapterPosition
+```
+
+```sql
+LEFT JOIN chapters current_chapter ON current_chapter.bookId = b.bookId
+    AND current_chapter.sourceId = bs.sourceId AND current_chapter.chapterId = p.chapterId
+    AND p.sourceId = bs.sourceId
+```
+
+The join is to the existing composite primary key, so it must not multiply the existing `c` counts. Order ties by chapter ID, consistently with the reader window. A removed saved chapter, missing selected-source catalog or another source returns null rather than promoting the old index. No persisted row is edited and schemas 1–5 remain unchanged.
+
+Extend `RoomBookRepositoryTest.kt`, `LibraryViewModelTest.kt` and the actual `app/src/androidTest/java/com/novelradar/app/data/db/NovelDatabaseTest.kt` with ordinal mapping, tied/gapped indices, source mismatch and removed saved IDs. Add an explicitly scoped host query contract helper at `app/src/test/resources/library/verify-shelf-position.ps1`, following the existing in-memory migration helper: shell reads the actual BookDao SELECT and generated schema 5, passes data by stdin to bundled Python SQLite, and executes only in-memory databases. Prove old selected-source/chapter/unread counts and labels survive, actual ordinal is correct despite a stale saved raw index, removed/foreign chapter yields null, and the stored original offset/index/hash/marker are unchanged. Observe assertion RED against the old query/projection before implementation. Do not use Python filesystem access or treat compiled Room tests as runtime evidence.
+
 - [ ] **Step 2: Render current/read-position labels without implying whole-book words**
 
-Mark the exact current detail-directory row and show its known chapter position. Preserve explicit selection start-at-zero and ordinary continue-reading restore behavior. For older chapters, label ordering-based position conservatively rather than claiming every skipped chapter was actually read. In the library use “读到第 x / N 章” (or known chapter position if total unavailable); if retaining a percentage, explicitly label it as chapter position, never exact whole-book character completion. Legacy positions remain known old positions and are not silently promoted.
+Mark the exact current detail-directory row and show its known chapter position. Preserve explicit selection start-at-zero and ordinary continue-reading restore behavior. For older chapters, label ordering-based position conservatively rather than claiming every skipped chapter was actually read. In the library use “读到第 x / N 章” from the actual ordinal for a matching CURRENT location; if retaining a percentage, explicitly label it as chapter position, never exact whole-book character completion. Legacy/unknown-format or absent-catalog locations show the known original chapter as “原阅读位置 …（待核对）” without a fresh catalog fraction or 100%. No matching saved position still means “尚未开始阅读”. Share one pure label property between the grid and continue card; legacy positions are not silently promoted.
 
 - [ ] **Step 3: Run final cumulative verification and independent reviews**
 
