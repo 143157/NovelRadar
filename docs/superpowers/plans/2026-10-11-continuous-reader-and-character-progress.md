@@ -27,6 +27,7 @@ The user requested a test APK first once this repair is complete. Complete and r
 - `ReaderUiState.kt`: bounded prepared chapters and continuation status, with existing `content`/`offset` representing the active visible chapter.
 - `ReaderViewModel.kt`: foreground entry, visible-position acceptance, continuation loading and at most two permitted preparation jobs.
 - `ScrollReader.kt` / `PagedReader.kt`: stable per-chapter presentation, actual visible position and deliberate boundary navigation.
+- `feature/reader/ReaderPresentation.kt` and mirrored `ReaderPresentationTest.kt` in Task 3: pure chapter-aware item/page identity, stable keys and UTF-16 position mapping shared by the actual scroll/pager renderers. Reuse `TextPage`, `TextPaginator` and `ChapterReadingPosition`; no second position format or production test-only helper.
 - `ReaderScreen.kt` / `ReaderControls.kt` / `app/NovelRadarApp.kt`: route the typed position/continuation events, show chapter progress and locate the current catalog row.
 - `feature/book/BookDetailUiState.kt` / `BookDetailViewModel.kt` / `BookDetailScreen.kt`: observe the existing persisted location and mark the same-source current chapter.
 - `feature/library/LibraryUiState.kt` / `LibraryScreen.kt`: retain existing subscription, label chapter position honestly instead of implying exact whole-book character completion.
@@ -157,7 +158,7 @@ All known tool/Gradle sessions have ended and ownership returned to root; the re
 
 ## Task 2: Visible chapter state, bounded continuation and request reuse
 
-- [ ] **Step 1: Add and observe ViewModel failures for actual visibility and lifecycle**
+- [x] **Step 1: Add and observe ViewModel failures for actual visibility and lifecycle**
 
 Extend existing tests rather than replacing them. Cover preparation of chapter two without changing `content`, `offset`, catalog or persisted progress; an accepted visible event for verified chapter two changes all of those together. Test first/last chapter, forward/backward events, unknown/unloaded chapter IDs, stale layout/selection callbacks, restoration/font/mode changes, loading/saving failures, close/stop races, legacy recovery gate, retry target and no automatic source switch.
 
@@ -175,7 +176,7 @@ The implementation checks the retained session, version, book/source ownership a
 
 Keep presentation and the recovery policy consistent: if automatic cross-chapter events are rejected while review is pending, present only the active body until explicit confirmation. Do not expose a different verified neighbor under the old active title/catalog. Prepared data may remain retained without being displayed or counted as read; legacy fallback stays outside the trusted window.
 
-- [ ] **Step 2: Keep loading state separate from active reading state**
+- [x] **Step 2: Keep loading state separate from active reading state**
 
 Append bounded prepared bodies and continuation status to `ReaderUiState`. Existing `content` remains the active visible chapter, not the most recently fetched chapter. Foreground manual selection preserves the existing exact save-before-change and initial-entry behavior. Scroll continuation appends a verified neighbor without moving the active chapter until it is visible. Deliberate paged boundary navigation may transition after successful loading because the user has requested that page; failed loading retains the original body/title/offset and exposes retry.
 
@@ -183,21 +184,39 @@ Window append/removal must not increment the restoration epoch or move the scrol
 
 When the actual visible chapter changes, serialize its exact CURRENT position through the existing save path, rejecting late prior events; within one chapter keep the existing 750 ms changes. Never emit a saved location from preparation completion or speculative window insertion. Save failures keep the reader usable and visibly retryable, and do not silently label an unwritten location as persisted.
 
-- [ ] **Step 3: Reuse at most two relevant preparation jobs**
+- [x] **Step 3: Reuse at most two relevant preparation jobs**
 
 Track jobs by actual upcoming chapter ID, retaining still-relevant jobs when the user advances into their target. A foreground request must share the repository's per-chapter lock/fetch with that in-flight preparation rather than cancel/restart it. After actual advancement, reconcile to the next zero/one/two IDs. Cancel jobs made irrelevant by a distant manual jump, leaving, deletion or disabling/restricting preferences. Do not launch unbounded generations of jobs or wait for chapter three before displaying already-ready chapter two.
 
 Use `prepareChapter` for speculative work, never ordinary `loadChapter` to evade metered preferences. With prefetch off or disallowed, crossing the visible boundary is a deliberate foreground continuation and may show a loading edge; merely restoring, repaginating or appending layout may not fetch the following chapter. An unverified body cannot enter the trusted continuous window.
 
-- [ ] **Step 4: Add fixed-delay real HTTP integration and verify GREEN**
+- [x] **Step 4: Add fixed-delay real HTTP integration and verify GREEN**
 
 Use a controlled delayed server, actual boundary engine/parser, rule-based fetcher, atomic store and real repository with low-level storage doubles. Assert exact request counts, no known-next-page misfetch, shared in-flight next chapter, cache reads independent from another stalled chapter, no progress changes on cache completion, actual position changes when crossing, cancellation and disabled/metered preparation. Prefer synchronization gates and bounded waits over fragile absolute speed claims. This proves reduced repeated work, not every real source loading in a fixed number of seconds.
 
-- [ ] **Step 5: Full verification, explicit commit and independent reviews**
+- [x] **Step 5: Full verification, explicit commit and independent reviews**
 
 Run the full four-task command and inspect reports. Commit only scoped reader/seam/integration test files. Both reviews must pass before UI consumes the new event model.
 
+### Task 2 verification and review
+
+Implementation `bef91f3443f099b6be533da2fe802d4ce1af3a6c`, parent `0b9f9a8632a56199aabec416bacd40ed97ef5085`, changes exactly five authorized files (two production, three tests; 1180 insertions / 35 deletions). No source/repository/schema/downloader/resource/UI changes or extra production helper. The actual public state contracts for Task 3 are recorded below.
+
+Root independently read the production coordination, complete new real HTTP fixture and changed tests (tool output gaps were separately reread), and archived assertion failures under ignored `app/build/continuous-task2-evidence/`. Initial RED has two assertions for missing trusted window/scroll edge load. Later real-collector RED expected offset six but got two during a suspended crossing save; another RED catches retry to the old chapter. Four preparation recovery assertions expose premature distant-target successor work, sticky failures after actual advancement/permission relaxation, and failed-close preparation loss. The ready-edge retry regression catches stale continuation error. A transient compilation correction is not behavioral RED evidence.
+
+Those paths were corrected without broadening scope: exact immutable captures serialize and re-emit later same-chapter movement; retries use actual identity; pending far jumps defer new successors; failed attempts retry only on meaningful activation/policy relaxation; failed close restores preparations; old canceled attempt identities cannot replace reused IDs. The integration fixture uses a serialized Main dispatcher, independently bounded HTTP gates, the real stored-rule adapter/engine/parser/atomic store/chapter repository/Room progress chain, and bounded cleanup. Legacy recovery still preserves its original row and local offsets without automatic writes.
+
+Final focused GREEN is **87 tests / three suites / zero failures, errors or skips** (74 ViewModel, seven continuation integration, six position integration). Implementation Full4 exited 0; actual full XML is **564 tests / 50 suites / all zero**. Root independently ran Full4 (exit 0, seven seconds, 61 tasks/one executed) and actual whole-unit `--rerun` (exit 0, 20 seconds, test task executed with 25 unchanged compilation prerequisites reused); fresh XML also contains 564 / 50 / all zero. Effective SARIF severities retain seven existing warnings and zero errors. Whitespace check passed; all command sessions ended and app/test/build ownership returned to root.
+
+Independent specification then quality review both passed with no required findings. The only root changes during review are future UI-plan clarifications. Stable deliverable APKs were not copied/overwritten, and no phone UI test ran. This closes Task 2 only; the two existing renderers still require Task 3 integration before the repaired APK can be delivered.
+
 ## Task 3: Scroll/paged continuity, titles, catalog and character display
+
+### Final Task 2 interface and visual boundary
+
+Consume the actual `ReaderUiState.presentationChapters` (gate shows only active), `restorationVersion` (viewport intent), `positionVersion` (callback epoch), `continuationTargetId/loading/error`, and nullable `characterProgress`. Route actual `ChapterReadingPosition` plus applicable epoch to `onVisiblePosition`; forward/backward reading edges use `continueForward`/`continueBackward`. Do not rebuild the sparse character index in UI: Task 2 caches it once for active immutable body identity and supplies the snapshot. Manual toolbar/catalog selection retains the separate start-at-zero selection actions.
+
+Preserve the user-selected visual system: Paper `#FFF8E8`/`#302F2B`, Day white/`#202124`, Night `#171A1D`/`#D7DBDF`, existing accent `#FF5A2A`. Body uses the existing preference-controlled system type, headings use restrained semibold chapter names, utility captions retain the small existing scale. The signature is truthful per-chapter headings and one concise position label, not new decorative graphics. Keep central-toolbar tap, themes, font/line-height/margin settings, brightness, system-bar behavior and selected launcher icon unchanged. Extra animation/branding is outside the repair brief.
 
 - [ ] **Step 1: Add and observe presentation helper failures and compile real UI regressions**
 
@@ -218,13 +237,18 @@ Build measured pages per chapter and keep their chapter/offset identity. At the 
 `NovelRadarApp.ReaderRoute` routes `ChapterReadingPosition` with the applicable position version; layout collectors use the current callback without leaking a previous session. Reader catalog highlights the active chapter and initially scrolls to it when opened. Top title, catalog highlight and per-chapter display derive from the same active state.
 
 ```kotlin
-val characterIndex = remember(loaded.content) { ChapterCharacterIndex(loaded.content) }
-val shown = characterIndex.progress(state.offset)
-val label = "${shown.read} / ${shown.total} 字 · 本章 ${shown.percent}% · " +
-    "第 ${state.catalogPosition + 1} / ${state.chapters.size} 章"
+val shown = state.characterProgress.takeIf {
+    state.content?.boundaryVerified == true && !state.positionNeedsReview
+}
+val chapterLabel = if (state.catalogPosition >= 0)
+    "第 ${state.catalogPosition + 1} / ${state.chapters.size} 章" else "章节位置待确认"
+val label = if (shown != null)
+    "${shown.read} / ${shown.total} 字 · 本章 ${shown.percent}% · $chapterLabel" else chapterLabel
 ```
 
 Memoize character counts appropriately. Hide precise character percentages for unverified legacy content or a pending position review, retaining the existing recovery notice/actions. Page number may remain as supplementary layout information; it is not persisted character progress. No exact whole-book character percentage from partial caches.
+
+Show the compact progress label in both reading modes without requiring the toolbar to be opened. Reserve enough bottom space that it does not cover the last readable line; when controls are open, use one consistent label rather than duplicate competing counters. Preserve the existing theme contrast and small utility typography.
 
 Apply the Task 2 recovery presentation policy to both modes: a pending gate that rejects cross-chapter events must not render a neighboring chapter as though it were still the active chapter. Clearing it explicitly may reveal already-prepared neighbors without restarting restoration or moving the anchor.
 
