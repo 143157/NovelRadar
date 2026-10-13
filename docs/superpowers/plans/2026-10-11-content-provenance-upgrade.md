@@ -156,6 +156,16 @@ Show a clear existing-style recovery notice with the known old chapter/offset an
 
 This is the minimal legacy bridge; bounded multi-chapter reading and Unicode character UI remain the next phase. Add only focused helper/UI files if the existing file becomes too large, after reporting their exact responsibility to root.
 
+### Task 3 verification; quality review remains open
+
+Application commits `7067d6a58c247d441bd2662f8342b510906e20dd` and `588e7adc6b5471466cc58fa7ade784069af57c0b` contain eight scoped files. The original independent specification review found two gaps: technical recovery wording and an integration fixture bypassing the stored-rule fetcher. The second commit changes only three of those files, directly displays the unchanged original offset as “原字符位置 …（待确认）”, and routes the real HTTP integration through `RuleBasedChapterContentFetcher`, `ChapterPageFetcher` and the book/source-scoped DAO context. The same specification reviewer re-read the changes and passed Task 3.
+
+Root independently inspected the correction diff and XML: the disabled-stored-rule RED has one actual assertion failure, expected zero requests but actual one, with zero errors/skips; focused GREEN has 64 tests / three suites, all passing. Root's full milestone command exited 0 in 57 seconds (61 tasks, one executed). A separate forced unit rerun executed all 26 tasks and exited 0 in 6 minutes 35 seconds, with fresh **503 tests / 47 suites / zero failures, errors or skips**. SARIF still contains the same seven existing warnings and zero errors. The two original delivered APK SHA-256 values are unchanged. Device-test sources compiled, but no phone tests ran.
+
+The subsequent quality review is still open, investigating whether a retained trusted-chapter event can be delivered after an exact save and write during the new recovery gate. This is not yet a confirmed defect or a quality pass. Keep Task 3 and final review checkboxes open until that investigation has a documented verdict and any required correction is independently re-reviewed. A tool approval quota interruption was not bypassed; the user resumed on October 13 and the same scoped read workflow became available again.
+
+Root re-ran the actual in-memory migration helper on October 13: source migration SQL and schemas 4/5 preserve seven tables, eleven rows, all old columns/keys/indices, offset 77, source choice, file metadata and download checkpoints. Only the new markers initialize to zero. No new stable APK was copied.
+
 ## Final verification and handoff
 
 - [ ] Run all focused RED/GREEN cycles, then the full four-task milestone command with the established offline/no-daemon/in-process flags; read actual XML and SARIF counts. Verify generated v5 schema and non-destructive migration data independently; compiled Android migration/UI tests are not runtime proof.
