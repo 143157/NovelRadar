@@ -11,6 +11,7 @@ import com.novelradar.app.domain.model.Chapter
 import com.novelradar.app.domain.model.ChapterContentFormat
 import com.novelradar.app.domain.model.ReaderPreferences
 import com.novelradar.app.domain.model.ReaderTheme
+import com.novelradar.app.domain.model.ReaderMode
 import com.novelradar.app.domain.model.SourceFailure
 import com.novelradar.app.domain.model.SourceResult
 import com.novelradar.app.domain.repository.*
@@ -26,6 +27,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.runCurrent
@@ -34,10 +36,486 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TestWatcher
 import org.junit.runner.Description
+import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ReaderViewModelTest {
     @get:Rule val main = MainDispatcherRule()
+
+    @Test(timeout = 15000) fun preparedBodyDoesNotMoveActiveButVisibleCrossingSavesExactCurrentChapter() = runTest(timeout = 10.seconds) {
+        val fixture = Fixture()
+        fixture.progress.initial = location("c0", 0, 18)
+        val vm = fixture.create()
+        val owner = ViewModelStore().also { it.put("reader", vm) }
+        try {
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.verifiedWindow.map { it.chapter.chapterId }).containsExactly("c0", "c1", "c2").inOrder()
+            assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c0")
+            assertThat(vm.uiState.value.offset).isEqualTo(18)
+            assertThat(vm.uiState.value.catalogPosition).isEqualTo(0)
+            assertThat(fixture.progress.exact.map { it.chapterId }.distinct()).containsExactly("c0")
+            val restore = vm.uiState.value.restorationVersion
+            val epoch = vm.uiState.value.positionVersion
+            vm.onVisiblePosition(epoch, ChapterReadingPosition("c1", 17))
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c1")
+            assertThat(vm.uiState.value.offset).isEqualTo(17)
+            assertThat(vm.uiState.value.catalogPosition).isEqualTo(1)
+            assertThat(fixture.progress.exact.last()).isEqualTo(fixture.progress.initial)
+            assertThat(fixture.progress.exact.last().chapterId).isEqualTo("c1")
+            assertThat(fixture.progress.exact.last().offset).isEqualTo(17)
+            assertThat(fixture.progress.exact.last().contentFormatVersion).isEqualTo(ChapterContentFormat.CURRENT)
+            assertThat(vm.uiState.value.positionVersion).isGreaterThan(epoch)
+            assertThat(vm.uiState.value.restorationVersion).isEqualTo(restore)
+            vm.onVisiblePosition(epoch, ChapterReadingPosition("c0", 90))
+            assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c1")
+        } finally { owner.clear() }
+    }
+
+    @Test(timeout = 15000) fun scrollEdgeAppendsWithoutMovingAndBackwardEdgeRemainsUsable() = runTest(timeout = 10.seconds) {
+        val fixture = Fixture()
+        fixture.settings.value.value = ReaderPreferences(prefetchCount = 0)
+        val vm = fixture.create()
+        val owner = ViewModelStore().also { it.put("reader", vm) }
+        try {
+            advanceUntilIdle()
+            vm.continueBackward(vm.uiState.value.positionVersion)
+            vm.continueForward(vm.uiState.value.positionVersion)
+            advanceUntilIdle()
+            assertThat(fixture.chapters.loads).containsExactly("c0", "c1").inOrder()
+            assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c0")
+            assertThat(fixture.progress.initial?.chapterId).isEqualTo("c0")
+            vm.onVisiblePosition(vm.uiState.value.positionVersion, ChapterReadingPosition("c1", 36))
+            advanceUntilIdle()
+            vm.continueBackward(vm.uiState.value.positionVersion)
+            advanceUntilIdle()
+            vm.onVisiblePosition(vm.uiState.value.positionVersion, ChapterReadingPosition("c0", 100))
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.offset).isEqualTo(100)
+            assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c0")
+        } finally { owner.clear() }
+    }
+
+    @Test(timeout = 15000) fun reviewHidesPreparedNeighborsAndAutomaticCallbacksCannotConfirmThem() = runTest(timeout = 10.seconds) {
+        val fixture = Fixture()
+        val original = location("c0", 0, 20).copy(contentFormatVersion = ChapterContentFormat.LEGACY)
+        fixture.progress.initial = original
+        val vm = fixture.create()
+        val owner = ViewModelStore().also { it.put("reader", vm) }
+        try {
+            advanceUntilIdle()
+            val epoch = vm.uiState.value.positionVersion
+            val restore = vm.uiState.value.restorationVersion
+            assertThat(vm.uiState.value.verifiedWindow.map { it.chapter.chapterId }).contains("c1")
+            assertThat(vm.uiState.value.presentationChapters.map { it.chapter.chapterId }).containsExactly("c0")
+            assertThat(vm.uiState.value.characterProgress).isNull()
+            vm.onVisiblePosition(epoch, ChapterReadingPosition("c1", 10))
+            vm.continueForward(epoch)
+            vm.continueBackward(epoch)
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c0")
+            assertThat(fixture.progress.initial).isEqualTo(original)
+            assertThat(fixture.progress.exact).isEmpty()
+            vm.onVisiblePosition(epoch, ChapterReadingPosition("c0", 32))
+            assertThat(vm.uiState.value.offset).isEqualTo(32)
+            assertThat(vm.confirmPosition()).isTrue()
+            assertThat(vm.uiState.value.presentationChapters.map { it.chapter.chapterId }).contains("c1")
+            assertThat(vm.uiState.value.restorationVersion).isEqualTo(restore)
+            assertThat(vm.uiState.value.offset).isEqualTo(32)
+            assertThat(fixture.progress.initial?.offset).isEqualTo(32)
+        } finally { owner.clear() }
+    }
+
+    @Test(timeout = 15000) fun invalidPreparedIdentitiesAndUnloadedVisiblePositionsAreRejected() = runTest(timeout = 10.seconds) {
+        for (wrong in listOf(Chapter("other", "a", "c1", 1, "other"), Chapter("book", "b", "c1", 1, "other"),
+            Chapter("book", "a", "missing", 1, "other"), null)) {
+            val fixture = Fixture()
+            fixture.chapters.preparedChapter = wrong
+            fixture.chapters.preparedVerified = wrong != null
+            val vm = fixture.create()
+            val owner = ViewModelStore().also { it.put("reader", vm) }
+            try {
+                advanceUntilIdle()
+                val epoch = vm.uiState.value.positionVersion
+                val saves = fixture.progress.exact.size
+                vm.onVisiblePosition(epoch, ChapterReadingPosition("missing", 1))
+                vm.onVisiblePosition(epoch, ChapterReadingPosition("c1", 20))
+                advanceUntilIdle()
+                assertThat(vm.uiState.value.verifiedWindow.map { it.chapter.chapterId }).containsExactly("c0")
+                assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c0")
+                assertThat(fixture.progress.exact).hasSize(saves)
+            } finally { owner.clear() }
+        }
+    }
+
+    @Test(timeout = 15000) fun boundedWindowPrunesDistantBodiesWithoutEvictingActiveAndUsesCatalogTieOrder() = runTest(timeout = 10.seconds) {
+        val fixture = Fixture()
+        fixture.catalog.list = (0..6).reversed().map { Chapter("book", "a", "c$it", it / 2, "第$it 章") } +
+            Chapter("foreign", "b", "wrong", 0, "错误")
+        val vm = fixture.create()
+        val owner = ViewModelStore().also { it.put("reader", vm) }
+        try {
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.chapters.map { it.chapterId }).containsExactly("c0", "c1", "c2", "c3", "c4", "c5", "c6").inOrder()
+            for (id in listOf("c1", "c2", "c3", "c4", "c5", "c6")) {
+                vm.onVisiblePosition(vm.uiState.value.positionVersion, ChapterReadingPosition(id, 3))
+                advanceUntilIdle()
+                val state = vm.uiState.value
+                assertThat(state.content?.chapter?.chapterId).isEqualTo(id)
+                assertThat(state.verifiedWindow.size).isAtMost(4)
+                assertThat(state.verifiedWindow.map { it.chapter.chapterId }).contains(id)
+                assertThat(state.verifiedWindow.map { it.chapter.chapterId }.toSet()).isEqualTo(
+                    readingWindowIds(state.chapters, id).intersect(state.verifiedWindow.map { it.chapter.chapterId }.toSet()))
+            }
+            val loads = fixture.chapters.loads.toList()
+            vm.continueForward(vm.uiState.value.positionVersion)
+            advanceUntilIdle()
+            assertThat(fixture.chapters.loads).isEqualTo(loads)
+            assertThat(vm.uiState.value.characterProgress).isEqualTo(ChapterCharacterProgress(3, 100))
+        } finally { owner.clear() }
+    }
+
+    @Test(timeout = 15000) fun pagedDeliberateEdgeTransitionsAndLayoutHasSeparateRestoreEpoch() = runTest(timeout = 10.seconds) {
+        val fixture = Fixture()
+        fixture.settings.value.value = ReaderPreferences(mode = ReaderMode.PAGED, prefetchCount = 0)
+        fixture.chapters.body = "甲😀乙"
+        val vm = fixture.create()
+        val owner = ViewModelStore().also { it.put("reader", vm) }
+        try {
+            advanceUntilIdle()
+            val epoch = vm.uiState.value.positionVersion
+            val restore = vm.uiState.value.restorationVersion
+            vm.continueForward(epoch)
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c1")
+            assertThat(vm.uiState.value.offset).isEqualTo(0)
+            assertThat(vm.uiState.value.restorationVersion).isGreaterThan(restore)
+            vm.onVisiblePosition(vm.uiState.value.positionVersion, ChapterReadingPosition("c1", 2))
+            assertThat(vm.uiState.value.characterProgress).isEqualTo(ChapterCharacterProgress(1, 3))
+            val currentRestore = vm.uiState.value.restorationVersion
+            vm.updatePreferences { it.copy(fontSizeSp = 28f, mode = ReaderMode.SCROLL) }
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.restorationVersion).isGreaterThan(currentRestore)
+            vm.continueForward(epoch)
+            advanceUntilIdle()
+            assertThat(fixture.chapters.loads).containsExactly("c0", "c1").inOrder()
+            assertThat(vm.uiState.value.offset).isEqualTo(2)
+        } finally { owner.clear() }
+    }
+
+    @Test(timeout = 15000) fun failedContinuationRetriesSameEdgeWithoutMovingActiveOrResettingOffset() = runTest(timeout = 10.seconds) {
+        val fixture = Fixture()
+        fixture.settings.value.value = ReaderPreferences(prefetchCount = 0)
+        val vm = fixture.create()
+        val owner = ViewModelStore().also { it.put("reader", vm) }
+        try {
+            advanceUntilIdle()
+            vm.onPositionChanged(47)
+            fixture.chapters.failed = "c1"
+            vm.continueForward(vm.uiState.value.positionVersion)
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.continuationTargetId).isEqualTo("c1")
+            assertThat(vm.uiState.value.continuationError).isEqualTo(SourceFailure.Timeout)
+            assertThat(vm.uiState.value.continuationLoading).isFalse()
+            assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c0")
+            assertThat(vm.uiState.value.offset).isEqualTo(47)
+            fixture.chapters.failed = null
+            vm.retry()
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.verifiedWindow.map { it.chapter.chapterId }).contains("c1")
+            assertThat(vm.uiState.value.continuationError).isNull()
+            assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c0")
+            assertThat(vm.uiState.value.offset).isEqualTo(47)
+            vm.onVisiblePosition(vm.uiState.value.positionVersion, ChapterReadingPosition("c1", 11))
+            advanceUntilIdle()
+            assertThat(fixture.progress.initial?.chapterId).isEqualTo("c1")
+        } finally { owner.clear() }
+    }
+
+    @Test(timeout = 15000) fun preparationsKeepRelevantJobsAndNeverRefetchReadyBodiesAfterPreferenceOrLayoutEvents() = runTest(timeout = 10.seconds) {
+        val fixture = Fixture()
+        fixture.catalog.list = (0..5).map { Chapter("book", "a", "c$it", it, "第$it 章") }
+        val gate = CompletableDeferred<Unit>()
+        fixture.chapters.preparationGates["c2"] = gate
+        val vm = fixture.create()
+        val owner = ViewModelStore().also { it.put("reader", vm) }
+        try {
+            runCurrent()
+            assertThat(fixture.chapters.preparations).containsExactly("c1", "c2").inOrder()
+            vm.onVisiblePosition(vm.uiState.value.positionVersion, ChapterReadingPosition("c1", 8))
+            runCurrent()
+            assertThat(fixture.chapters.cancelledPreparations).doesNotContain("c2")
+            assertThat(fixture.chapters.preparations).containsExactly("c1", "c2", "c3").inOrder()
+            gate.complete(Unit)
+            advanceUntilIdle()
+            val calls = fixture.chapters.preparations.toList()
+            val restore = vm.uiState.value.restorationVersion
+            vm.updatePreferences { it.copy(theme = ReaderTheme.NIGHT) }
+            advanceUntilIdle()
+            assertThat(fixture.chapters.preparations).isEqualTo(calls)
+            assertThat(vm.uiState.value.restorationVersion).isEqualTo(restore)
+            vm.selectChapter("c5")
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.verifiedWindow.map { it.chapter.chapterId }).containsExactly("c5")
+        } finally { gate.complete(Unit); owner.clear() }
+    }
+
+    @Test(timeout = 15000) fun restrictingPreferencesCancelsOnlyNowIrrelevantPreparationAndCloseDropsLateResult() = runTest(timeout = 10.seconds) {
+        val fixture = Fixture()
+        val first = CompletableDeferred<Unit>()
+        val second = CompletableDeferred<Unit>()
+        fixture.chapters.preparationGates["c1"] = first
+        fixture.chapters.preparationGates["c2"] = second
+        val vm = fixture.create()
+        val owner = ViewModelStore().also { it.put("reader", vm) }
+        try {
+            runCurrent()
+            vm.updatePreferences { it.copy(prefetchCount = 1) }
+            runCurrent()
+            assertThat(fixture.chapters.cancelledPreparations).containsExactly("c2")
+            assertThat(vm.close()).isTrue()
+            first.complete(Unit); second.complete(Unit)
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.verifiedWindow.map { it.chapter.chapterId }).containsExactly("c0")
+            assertThat(fixture.chapters.cancelledPreparations).containsExactly("c1", "c2")
+            val writes = fixture.progress.exact.size
+            vm.onVisiblePosition(vm.uiState.value.positionVersion, ChapterReadingPosition("c1", 2))
+            vm.continueForward(vm.uiState.value.positionVersion)
+            advanceUntilIdle()
+            assertThat(fixture.progress.exact).hasSize(writes)
+        } finally { first.complete(Unit); second.complete(Unit); owner.clear() }
+    }
+
+    @Test(timeout = 15000) fun capturedCrossingWritesDrainBeforeLatestStopAndFailedWriteStaysRetryable() = runTest(timeout = 10.seconds) {
+        val fixture = Fixture()
+        val vm = fixture.create()
+        val owner = ViewModelStore().also { it.put("reader", vm) }
+        val gate = CompletableDeferred<Unit>()
+        try {
+            advanceUntilIdle()
+            fixture.progress.saveGate = gate
+            vm.onVisiblePosition(vm.uiState.value.positionVersion, ChapterReadingPosition("c1", 13))
+            runCurrent()
+            vm.onVisiblePosition(vm.uiState.value.positionVersion, ChapterReadingPosition("c2", 27))
+            vm.onPositionChanged(39)
+            vm.saveOnStop()
+            runCurrent()
+            fixture.progress.saveGate = null
+            gate.complete(Unit)
+            advanceUntilIdle()
+            assertThat(fixture.progress.exact.filter { it.chapterId == "c1" }.map { it.offset }).containsExactly(13)
+            assertThat(fixture.progress.exact.last().chapterId).isEqualTo("c2")
+            assertThat(fixture.progress.exact.last().offset).isEqualTo(39)
+            fixture.progress.failSave = true
+            vm.onVisiblePosition(vm.uiState.value.positionVersion, ChapterReadingPosition("c1", 21))
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.notice).isEqualTo("阅读位置保存失败，请重试返回")
+            assertThat(fixture.progress.initial?.chapterId).isEqualTo("c2")
+            fixture.progress.failSave = false
+            assertThat(vm.saveExact()).isTrue()
+            assertThat(fixture.progress.initial?.chapterId).isEqualTo("c1")
+            assertThat(fixture.progress.initial?.offset).isEqualTo(21)
+        } finally { gate.complete(Unit); owner.clear() }
+    }
+
+    @Test(timeout = 15000) fun retryAfterVisibleCrossingUsesLatestActiveIdentityAndOffset() = runTest(timeout = 10.seconds) {
+        val fixture = Fixture()
+        val vm = fixture.create()
+        val owner = ViewModelStore().also { it.put("reader", vm) }
+        try {
+            advanceUntilIdle()
+            vm.onVisiblePosition(vm.uiState.value.positionVersion, ChapterReadingPosition("c1", 15))
+            advanceUntilIdle()
+            vm.onPositionChanged(32)
+            vm.retry()
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c1")
+            assertThat(vm.uiState.value.offset).isEqualTo(32)
+            assertThat(vm.uiState.value.positionNeedsReview).isFalse()
+            assertThat(fixture.progress.initial?.chapterId).isEqualTo("c1")
+        } finally { owner.clear() }
+    }
+
+    @Test(timeout = 15000) fun distantSelectionWaitsForActivationBeforePreparingTargetSuccessors() = runTest(timeout = 10.seconds) {
+        val fixture = Fixture()
+        fixture.catalog.list = (0..6).map { Chapter("book", "a", "c$it", it, "第$it 章") }
+        val vm = fixture.create()
+        val owner = ViewModelStore().also { it.put("reader", vm) }
+        val gate = CompletableDeferred<Unit>()
+        try {
+            advanceUntilIdle()
+            fixture.chapters.gate = gate
+            vm.selectChapter("c4")
+            runCurrent()
+            assertThat(fixture.chapters.preparations).containsExactly("c1", "c2").inOrder()
+            assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c0")
+            gate.complete(Unit)
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c4")
+            assertThat(vm.uiState.value.verifiedWindow.map { it.chapter.chapterId }).containsExactly("c4", "c5", "c6").inOrder()
+            assertThat(fixture.chapters.preparations).containsExactly("c1", "c2", "c5", "c6").inOrder()
+        } finally { gate.complete(Unit); owner.clear() }
+    }
+
+    @Test(timeout = 15000) fun failedPreparationRetriesOnceOnActualAdvancementWithoutCompletionLoop() = runTest(timeout = 10.seconds) {
+        val fixture = Fixture()
+        fixture.catalog.list = (0..4).map { Chapter("book", "a", "c$it", it, "第$it 章") }
+        fixture.chapters.failed = "c2"
+        val vm = fixture.create()
+        val owner = ViewModelStore().also { it.put("reader", vm) }
+        try {
+            advanceUntilIdle()
+            assertThat(fixture.chapters.preparations.count { it == "c2" }).isEqualTo(1)
+            fixture.chapters.failed = null
+            vm.onVisiblePosition(vm.uiState.value.positionVersion, ChapterReadingPosition("c1", 8))
+            advanceUntilIdle()
+            assertThat(fixture.chapters.preparations.count { it == "c2" }).isEqualTo(2)
+            assertThat(vm.uiState.value.verifiedWindow.map { it.chapter.chapterId }).containsExactly("c0", "c1", "c2", "c3").inOrder()
+            vm.updatePreferences { it.copy(theme = ReaderTheme.NIGHT) }
+            advanceUntilIdle()
+            assertThat(fixture.chapters.preparations.count { it == "c2" }).isEqualTo(2)
+        } finally { owner.clear() }
+    }
+
+    @Test(timeout = 15000) fun allowingMeteredPreparationRetriesFailedAttemptWithoutForegroundLoad() = runTest(timeout = 10.seconds) {
+        val fixture = Fixture()
+        fixture.chapters.failed = "c1"
+        val vm = fixture.create()
+        val owner = ViewModelStore().also { it.put("reader", vm) }
+        try {
+            advanceUntilIdle()
+            fixture.chapters.failed = null
+            vm.updatePreferences { it.copy(allowMeteredPrefetch = true) }
+            advanceUntilIdle()
+            assertThat(fixture.chapters.preparations.count { it == "c1" }).isEqualTo(2)
+            assertThat(vm.uiState.value.verifiedWindow.map { it.chapter.chapterId }).contains("c1")
+            assertThat(fixture.chapters.loads).containsExactly("c0")
+        } finally { owner.clear() }
+    }
+
+    @Test(timeout = 15000) fun failedCloseRestartsStillRelevantPreparationsAndKeepsReaderUsable() = runTest(timeout = 10.seconds) {
+        val fixture = Fixture()
+        val one = CompletableDeferred<Unit>()
+        val two = CompletableDeferred<Unit>()
+        fixture.chapters.preparationGates["c1"] = one
+        fixture.chapters.preparationGates["c2"] = two
+        val vm = fixture.create()
+        val owner = ViewModelStore().also { it.put("reader", vm) }
+        try {
+            runCurrent()
+            fixture.progress.failSave = true
+            assertThat(vm.close()).isFalse()
+            runCurrent()
+            assertThat(fixture.chapters.preparations).containsExactly("c1", "c2", "c1", "c2").inOrder()
+            fixture.progress.failSave = false
+            one.complete(Unit); two.complete(Unit)
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.verifiedWindow.map { it.chapter.chapterId }).containsExactly("c0", "c1", "c2").inOrder()
+            vm.onVisiblePosition(vm.uiState.value.positionVersion, ChapterReadingPosition("c1", 12))
+            advanceUntilIdle()
+            assertThat(fixture.progress.initial?.chapterId).isEqualTo("c1")
+        } finally { one.complete(Unit); two.complete(Unit); owner.clear() }
+    }
+
+    @Test(timeout = 15000) fun cancelledOldPreparationCannotReplaceNewJobResultForReusedChapterId() = runTest(timeout = 10.seconds) {
+        val fixture = Fixture()
+        fixture.settings.value.value = ReaderPreferences(prefetchCount = 1)
+        fixture.chapters.ignorePreparationCancellation = true
+        fixture.chapters.preparationBody = "old body"
+        val old = CompletableDeferred<Unit>()
+        val fresh = CompletableDeferred<Unit>()
+        fixture.chapters.preparationGates["c1"] = old
+        val vm = fixture.create()
+        val owner = ViewModelStore().also { it.put("reader", vm) }
+        try {
+            runCurrent()
+            vm.updatePreferences { it.copy(prefetchCount = 0) }
+            runCurrent()
+            fixture.chapters.preparationGates["c1"] = fresh
+            fixture.chapters.preparationBody = "fresh body"
+            vm.updatePreferences { it.copy(prefetchCount = 1) }
+            runCurrent()
+            fresh.complete(Unit)
+            runCurrent()
+            old.complete(Unit)
+            advanceUntilIdle()
+            assertThat(fixture.chapters.preparations).containsExactly("c1", "c1").inOrder()
+            assertThat(vm.uiState.value.verifiedWindow.first { it.chapter.chapterId == "c1" }.content).isEqualTo("fresh body")
+            assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c0")
+        } finally { old.complete(Unit); fresh.complete(Unit); owner.clear(); runCurrent() }
+    }
+
+    @Test(timeout = 15000) fun continuationRejectsForeignOrUnverifiedBodiesWithoutSourceSwitchOrPositionWrites() = runTest(timeout = 10.seconds) {
+        for (wrong in listOf(Chapter("other", "a", "c1", 1, "wrong"), Chapter("book", "b", "c1", 1, "wrong"),
+            Chapter("book", "a", "c2", 2, "wrong"), null)) {
+            val fixture = Fixture()
+            fixture.settings.value.value = ReaderPreferences(prefetchCount = 0)
+            val vm = fixture.create()
+            val owner = ViewModelStore().also { it.put("reader", vm) }
+            try {
+                advanceUntilIdle()
+                vm.onPositionChanged(17)
+                val writes = fixture.progress.exact.toList()
+                fixture.chapters.returnedChapter = wrong
+                fixture.chapters.verified = wrong != null
+                vm.continueForward(vm.uiState.value.positionVersion)
+                advanceUntilIdle()
+                assertThat(vm.uiState.value.continuationError).isNotNull()
+                assertThat(vm.uiState.value.continuationTargetId).isEqualTo("c1")
+                assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c0")
+                assertThat(vm.uiState.value.content?.chapter?.sourceId).isEqualTo("a")
+                assertThat(vm.uiState.value.offset).isEqualTo(17)
+                assertThat(vm.uiState.value.verifiedWindow.map { it.chapter.chapterId }).containsExactly("c0")
+                assertThat(fixture.progress.exact).isEqualTo(writes)
+            } finally { owner.clear() }
+        }
+    }
+
+    @Test(timeout = 15000) fun backwardPagedRetryKeepsCorrectNeighborAndArrivesAtEnd() = runTest(timeout = 10.seconds) {
+        val fixture = Fixture()
+        fixture.settings.value.value = ReaderPreferences(prefetchCount = 0, mode = ReaderMode.PAGED)
+        val vm = fixture.create("c2")
+        val owner = ViewModelStore().also { it.put("reader", vm) }
+        try {
+            advanceUntilIdle()
+            fixture.chapters.failed = "c1"
+            vm.continueBackward(vm.uiState.value.positionVersion)
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.continuationTargetId).isEqualTo("c1")
+            assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c2")
+            fixture.chapters.failed = null
+            vm.retry()
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c1")
+            assertThat(vm.uiState.value.offset).isEqualTo(100)
+            assertThat(fixture.progress.initial?.offset).isEqualTo(100)
+        } finally { owner.clear() }
+    }
+
+    @Test(timeout = 15000) fun recoveredPreparedEdgeClearsOldContinuationErrorOnRetryWithoutMovingVisibleChapter() = runTest(timeout = 10.seconds) {
+        val fixture = Fixture()
+        fixture.settings.value.value = ReaderPreferences(prefetchCount = 1)
+        fixture.chapters.failed = "c1"
+        val vm = fixture.create()
+        val owner = ViewModelStore().also { it.put("reader", vm) }
+        try {
+            advanceUntilIdle()
+            vm.continueForward(vm.uiState.value.positionVersion)
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.continuationError).isEqualTo(SourceFailure.Timeout)
+            fixture.chapters.failed = null
+            vm.updatePreferences { it.copy(allowMeteredPrefetch = true) }
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.verifiedWindow.map { it.chapter.chapterId }).contains("c1")
+            val calls = fixture.chapters.loads.toList()
+            vm.retry()
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.continuationError).isNull()
+            assertThat(vm.uiState.value.continuationTargetId).isNull()
+            assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c0")
+            assertThat(fixture.chapters.loads).isEqualTo(calls)
+        } finally { owner.clear() }
+    }
 
     @Test fun loadsCachedChapterAndPrefetchesAtMostTwo() = runTest {
         val fixture = Fixture()
@@ -46,7 +524,8 @@ class ReaderViewModelTest {
         assertThat(vm.uiState.value.content?.chapter?.chapterId).isEqualTo("c0")
         assertThat(vm.uiState.value.content?.origin).isEqualTo(ChapterOrigin.Cached)
         assertThat(vm.uiState.value.loading).isFalse()
-        assertThat(fixture.chapters.prefetches).containsExactly(0 to 2)
+        assertThat(fixture.chapters.preparations).containsExactly("c1", "c2").inOrder()
+        assertThat(fixture.chapters.prefetches).isEmpty()
     }
 
     @Test fun outOfRangeCurrentPositionIsNotClampedOrOverwritten() = runTest {
@@ -95,7 +574,7 @@ class ReaderViewModelTest {
         assertThat(fixture.progress.initial).isEqualTo(original)
         assertThat(fixture.progress.exact).isEmpty()
         assertThat(fixture.progress.changes).isEmpty()
-        assertThat(fixture.chapters.prefetches).isNotEmpty()
+        assertThat(fixture.chapters.preparations).containsExactly("c2")
     }
 
     @Test fun temporaryLegacyBodyIsViewableWithoutAutomaticWrites() = runTest {
@@ -704,13 +1183,14 @@ class ReaderViewModelTest {
         fixture.settings.value.value = ReaderPreferences(prefetchCount = 0)
         val vm = fixture.create()
         advanceUntilIdle()
-        assertThat(fixture.chapters.prefetches).isEmpty()
+        assertThat(fixture.chapters.preparations).isEmpty()
         vm.updatePreferences { it.copy(theme = ReaderTheme.NIGHT, prefetchCount = 1) }
         advanceUntilIdle()
         assertThat(vm.uiState.value.preferences.theme).isEqualTo(ReaderTheme.NIGHT)
+        assertThat(fixture.chapters.preparations).containsExactly("c1")
         vm.nextChapter()
         advanceUntilIdle()
-        assertThat(fixture.chapters.prefetches).containsExactly(1 to 1)
+        assertThat(fixture.chapters.preparations).containsExactly("c1", "c2").inOrder()
     }
 
     @Test fun positionUpdatesAndExactSaveUseMonotonicallyIncreasingEventTimes() = runTest {
@@ -769,10 +1249,10 @@ class ReaderViewModelTest {
         }
         ReaderViewModel("book", "a", null, fixture.catalog, fixture.chapters, delayed, fixture.progress)
         runCurrent()
-        assertThat(fixture.chapters.prefetches).isEmpty()
+        assertThat(fixture.chapters.preparations).isEmpty()
         gate.complete(ReaderPreferences(prefetchCount = 0))
         advanceUntilIdle()
-        assertThat(fixture.chapters.prefetches).isEmpty()
+        assertThat(fixture.chapters.preparations).isEmpty()
     }
 
     @Test fun preferencesReadFailureKeepsDefaultsAndDoesNotCrashReader() = runTest {
@@ -785,7 +1265,7 @@ class ReaderViewModelTest {
         advanceUntilIdle()
         assertThat(vm.uiState.value.content).isNotNull()
         assertThat(vm.uiState.value.notice).isNotNull()
-        assertThat(fixture.chapters.prefetches).isEmpty()
+        assertThat(fixture.chapters.preparations).isEmpty()
     }
 
     @Test fun ignoresStalePositionEventsFromPreviousChapterOrLayout() = runTest {
@@ -1018,6 +1498,13 @@ class ReaderViewModelTest {
     private class FakeChapters(val catalog: () -> List<Chapter>) : ChapterRepository {
         val loads = mutableListOf<String>()
         val prefetches = mutableListOf<Pair<Int, Int>>()
+        val preparations = mutableListOf<String>()
+        val cancelledPreparations = mutableListOf<String>()
+        val preparationGates = mutableMapOf<String, CompletableDeferred<Unit>>()
+        var preparedChapter: Chapter? = null
+        var preparedVerified = true
+        var preparationBody: String? = null
+        var ignorePreparationCancellation = false
         var failed: String? = null
         var origin = ChapterOrigin.Cached
         var body = "正文".repeat(50)
@@ -1033,6 +1520,18 @@ class ReaderViewModelTest {
         override suspend fun prefetchNext(bookId: String, sourceId: String, chapterIndex: Int, count: Int): Int {
             prefetches += chapterIndex to count
             return count
+        }
+        override suspend fun prepareChapter(bookId: String, sourceId: String, chapterId: String): SourceResult<LoadedChapter> {
+            preparations += chapterId
+            val preparedBody = preparationBody ?: body
+            val preparationGate = preparationGates[chapterId]
+            try {
+                if (ignorePreparationCancellation) withContext(NonCancellable) { preparationGate?.await() }
+                else preparationGate?.await()
+            }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { cancelledPreparations += chapterId; throw cancelled }
+            return if (failed == chapterId) SourceResult.Failure(SourceFailure.Timeout)
+            else SourceResult.Success(LoadedChapter(preparedChapter ?: catalog().first { it.chapterId == chapterId }, preparedBody, origin, verified && preparedVerified))
         }
     }
 

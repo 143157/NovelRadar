@@ -19,6 +19,7 @@ import com.novelradar.app.source.parse.*
 import com.novelradar.app.source.rule.RuleDto
 import com.novelradar.app.source.script.ScriptExecutor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -145,6 +146,56 @@ class ReaderPositionRepairIntegrationTest {
                 assertThat(storage.writes).hasSize(writes)
                 assertThat(vm.close()).isTrue()
             } finally { owner.clear() }
+        }
+    }
+
+    @Test(timeout = 15000) fun scrollingDuringSuspendedOldExactSaveProtectsLatestRecordWhenUnverifiedReplacementArrives() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse().setResponseCode(503))
+            val files = AtomicChapterFileStore(temporary.newFolder().toPath())
+            val trusted = files.write("book", "a", "one", "可信正文".repeat(30))
+            val legacy = files.write("book", "a", "two", "旧混章正文".repeat(30))
+            val dao = MemoryChapterDao(
+                chapter("one", 0, server).copy(localContentState = "CACHED", localFilePath = trusted.relativePath,
+                    contentSha256 = trusted.sha256, contentBytes = trusted.byteCount, contentFormatVersion = ChapterContentFormat.CURRENT),
+                chapter("two", 1, server).copy(localContentState = "CACHED", localFilePath = legacy.relativePath,
+                    contentSha256 = legacy.sha256, contentBytes = legacy.byteCount))
+            val storage = MemoryBooks(ReadingLocation("book", "a", "one", 0, 8, 50L))
+            val vm = reader(dao, files, httpFetcher(dao, server), storage)
+            val owner = ViewModelStore().also { it.put("reader", vm) }
+            val gate = CompletableDeferred<Unit>()
+            try {
+                withTimeout(10_000) {
+                    vm.uiState.first { !it.loading && it.content != null }
+                    assertThat(vm.saveExact()).isTrue()
+                    storage.saveGate = gate
+                    vm.onPositionChanged(24)
+                    vm.nextChapter()
+                    storage.saveStarted.await()
+                    vm.onPositionChanged(62)
+                    storage.saveGate = null
+                    gate.complete(Unit)
+                    val state = vm.uiState.first { !it.loading && it.content?.chapter?.chapterId == "two" }
+                    val protected = storage.value.value!!
+                    val writes = storage.writes.size
+                    assertThat(protected.chapterId).isEqualTo("one")
+                    assertThat(protected.offset).isEqualTo(62)
+                    assertThat(state.originalReadingLocation).isEqualTo(protected)
+                    assertThat(state.positionNeedsReview).isTrue()
+                    vm.onPositionChanged(70)
+                    vm.saveOnStop()
+                    delay(900) // Real repository's 750 ms debounce crosses the exact generation.
+                    assertThat(storage.value.value).isEqualTo(protected)
+                    assertThat(storage.writes).hasSize(writes)
+                    assertThat(vm.close()).isTrue()
+                }
+            } finally {
+                storage.saveGate = null
+                gate.complete(Unit)
+                owner.clear()
+                withTimeout(2_000) { vm.close() }
+            }
         }
     }
 
@@ -294,6 +345,8 @@ class ReaderPositionRepairIntegrationTest {
     private class MemoryBooks(original: ReadingLocation) : BookRepository {
         val value = MutableStateFlow<ReadingLocation?>(original)
         val writes = mutableListOf<ReadingLocation>()
+        var saveGate: CompletableDeferred<Unit>? = null
+        val saveStarted = CompletableDeferred<Unit>()
         override suspend fun saveSearchHit(hit: SearchHit): Book = error("Not used by the reader")
         override suspend fun getBook(bookId: String) = Book("book", "key", "星河旅人", "叶子")
         override fun observeSources(bookId: String): Flow<List<BookSource>> = flowOf(emptyList())
@@ -301,6 +354,9 @@ class ReaderPositionRepairIntegrationTest {
         override suspend fun addToShelf(bookId: String, atEpochMillis: Long) = Unit
         override suspend fun removeFromShelf(bookId: String) = Unit
         override fun progress(bookId: String): Flow<ReadingLocation?> = value
-        override suspend fun saveProgress(location: ReadingLocation) { writes += location; value.value = location }
+        override suspend fun saveProgress(location: ReadingLocation) {
+            saveGate?.let { saveStarted.complete(Unit); it.await() }
+            writes += location; value.value = location
+        }
     }
 }

@@ -23,7 +23,19 @@ data class ReaderUiState(
     val originalReadingLocation: ReadingLocation? = null,
     val originalChapterTitle: String? = null,
     val initialEntryCompleted: Boolean = false,
+    /** Verified previous + active + next two bodies, ordered by the scoped catalog. */
+    val verifiedWindow: List<LoadedChapter> = emptyList(),
+    /** Viewport restoration token; preparation and actual scroll crossings leave it unchanged. */
+    val restorationVersion: Int = 0,
+    val continuationTargetId: String? = null,
+    val continuationLoading: Boolean = false,
+    val continuationError: SourceFailure? = null,
+    /** Unicode progress of the confirmed active body; null while position review is pending. */
+    val characterProgress: ChapterCharacterProgress? = null,
 ) {
+    /** Pending review keeps neighbors hidden so their text cannot appear under the old chapter identity. */
+    val presentationChapters: List<LoadedChapter> get() =
+        if (positionNeedsReview) listOfNotNull(content) else verifiedWindow
     val catalogPosition: Int get() = chapters.indexOfFirst { it.chapterId == content?.chapter?.chapterId }
     val canPrevious: Boolean get() = !loading && catalogPosition > 0
     val canNext: Boolean get() = !loading && catalogPosition >= 0 && catalogPosition < chapters.lastIndex
