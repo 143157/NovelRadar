@@ -73,15 +73,19 @@ fun ReaderScreen(
 
     Box(modifier.fillMaxSize().background(colors.first).testTag("reader_center_toggle")
         .semantics { onClick("显示或隐藏阅读工具栏") { toggle(); true } }) {
-        if (state.content != null) Column(Modifier.fillMaxSize()) {
-            val readerModifier = Modifier.weight(1f).padding(bottom = if (controlsVisible) 32.dp else 0.dp)
-            when (state.preferences.mode) {
-                ReaderMode.SCROLL -> ScrollReader(state, style, colors.second, onPositionChanged, toggle,
-                    onContinueForward, onContinueBackward, readerModifier.testTag("reader_scroll"))
-                ReaderMode.PAGED -> PagedReader(state, style, colors.second, onPositionChanged, toggle,
-                    onContinueBackward, onContinueForward, readerModifier.testTag("reader_paged"))
-            }
-            if (!controlsVisible) Surface(Modifier.fillMaxWidth(), color = colors.first) {
+        Column(Modifier.fillMaxSize()) {
+            if (state.content != null) {
+                val readerModifier = Modifier.weight(1f)
+                when (state.preferences.mode) {
+                    ReaderMode.SCROLL -> ScrollReader(state, style, colors.second, onPositionChanged, toggle,
+                        onContinueForward, onContinueBackward, readerModifier.testTag("reader_scroll"))
+                    ReaderMode.PAGED -> PagedReader(state, style, colors.second, onPositionChanged, toggle,
+                        onContinueBackward, onContinueForward, readerModifier.testTag("reader_paged"))
+                }
+            } else Box(Modifier.weight(1f))
+            if (controlsVisible) ReaderControls(state, colors.first, colors.second, onPrevious, onNext,
+                { catalogVisible = true }, { settingsVisible = true })
+            else if (state.content != null) Surface(Modifier.fillMaxWidth(), color = colors.first) {
                 Text(readerProgressLabel(state), Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                     fontSize = 11.sp, color = colors.second.copy(alpha = 0.65f))
             }
@@ -100,8 +104,6 @@ fun ReaderScreen(
                 }
             }
         }
-        if (controlsVisible) ReaderControls(state, colors.first, colors.second, onPrevious, onNext,
-            { catalogVisible = true }, { settingsVisible = true }, Modifier.align(Alignment.BottomCenter))
         if (state.continuationLoading || state.continuationError != null) Surface(
             Modifier.align(Alignment.BottomCenter).padding(bottom = if (controlsVisible) 100.dp else 36.dp),
             color = colors.first, contentColor = colors.second) {

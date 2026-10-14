@@ -1,12 +1,16 @@
 package com.novelradar.app.feature.reader
 
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
@@ -29,6 +33,41 @@ import org.junit.Test
 
 class ReaderScreenTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun enlargedFontControlsReserveActualFooterHeightInBothModesWithoutLosingAnchor() {
+        val initial = state()
+        val body = initial.content!!.copy(content = ("真实正文末行😀，不能被阅读工具栏覆盖。\n").repeat(120))
+        val live = mutableStateOf(initial.copy(content = body, verifiedWindow = listOf(body), offset = 17,
+            characterProgress = chapterCharacterProgress(body.content, 17),
+            preferences = initial.preferences.copy(fontSizeSp = 36f, prefetchCount = 0)))
+        var visible: ChapterReadingPosition? = null
+        var requests = 0
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale = 1.6f)) {
+                NovelRadarTheme {
+                    ReaderScreen(live.value, {}, { visible = it }, {}, {}, {}, {}, {},
+                        onContinueForward = { requests++ }, onContinueBackward = { requests++ })
+                }
+            }
+        }
+        for ((mode, tag) in listOf(ReaderMode.SCROLL to "reader_scroll", ReaderMode.PAGED to "reader_paged")) {
+            compose.runOnIdle { live.value = live.value.copy(preferences = live.value.preferences.copy(mode = mode),
+                restorationVersion = live.value.restorationVersion + 1) }
+            compose.waitForIdle()
+            compose.onNodeWithTag("reader_center_toggle").performClick()
+            val reader = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+            val controls = compose.onNodeWithTag("reader_controls").fetchSemanticsNode().boundsInRoot
+            assertThat(reader.bottom).isAtMost(controls.top + 0.5f)
+            assertThat(compose.onAllNodesWithText(readerProgressLabel(live.value)).fetchSemanticsNodes()).hasSize(1)
+            compose.runOnIdle { assertThat(visible).isEqualTo(ChapterReadingPosition("c0", 17)); assertThat(requests).isEqualTo(0) }
+            compose.onNodeWithTag("reader_center_toggle").performClick()
+            val hiddenReader = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+            val progress = compose.onNodeWithText(readerProgressLabel(live.value)).fetchSemanticsNode().boundsInRoot
+            assertThat(hiddenReader.bottom).isAtMost(progress.top + 0.5f)
+            compose.runOnIdle { assertThat(visible).isEqualTo(ChapterReadingPosition("c0", 17)); assertThat(requests).isEqualTo(0) }
+        }
+    }
 
     @Test fun centralTapOpensControlsAndSettingsChangeThemeAndMode() {
         val state = mutableStateOf(state())
