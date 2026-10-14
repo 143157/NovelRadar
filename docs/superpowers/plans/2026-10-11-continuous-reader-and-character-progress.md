@@ -218,21 +218,23 @@ Consume the actual `ReaderUiState.presentationChapters` (gate shows only active)
 
 Preserve the user-selected visual system: Paper `#FFF8E8`/`#302F2B`, Day white/`#202124`, Night `#171A1D`/`#D7DBDF`, existing accent `#FF5A2A`. Body uses the existing preference-controlled system type, headings use restrained semibold chapter names, utility captions retain the small existing scale. The signature is truthful per-chapter headings and one concise position label, not new decorative graphics. Keep central-toolbar tap, themes, font/line-height/margin settings, brightness, system-bar behavior and selected launcher icon unchanged. Extra animation/branding is outside the repair brief.
 
-- [ ] **Step 1: Add and observe presentation helper failures and compile real UI regressions**
+- [x] **Step 1: Add and observe presentation helper failures and compile real UI regressions**
 
 Each presented item/page must retain its chapter ID, title and original offset. Tests cover two distinct chapters with identical body text and overlapping local offsets, visible chapter mapping, title rows, stable keys, restored offsets, empty chapters, supplementary characters and bounded presentation. Compose device tests exercise actual user scroll/swipe/tap, not a high-level fake screen. Compile these tests even when no device is available, and state that runtime remains unverified.
 
-- [ ] **Step 2: Render a stable chapter window in scrolling mode**
+- [x] **Step 2: Render a stable chapter window in scrolling mode**
 
 Use stable composite keys, for example `"chapter:$chapterId:title"` and `"chapter:$chapterId:text:$startOffset"`; never use only local offsets across chapters. Each chapter displays its own heading. Map the first relevant visible item and line to `ChapterReadingPosition`. Appending prepared chapters or removing a far previous chapter preserves the anchored item and its line offset. Do not restart restoration simply because the active chapter updates.
 
 Approaching the end may use already permitted prepared content. Reaching the reading edge can request deliberate continuation; setting prefetch to zero must not cause background fetch merely because an edge is laid out. Loading/error/retry appears at the edge, current content stays readable, and the final chapter ends without a phantom next request. Keep the central toolbar gesture and readable theme/fonts.
 
-- [ ] **Step 3: Render paging across individual chapter pages**
+For consecutive short or empty chapters whose retained window is shorter than the viewport, the explicit continue action must still advance to the next real heading. Make that heading physically anchorable and keep the actual visible-position collector consistent with it; emitting a synthetic next-chapter callback while the first visible item remains the old chapter is not sufficient. Handle both an already-ready neighbor and a user-requested neighbor that becomes ready later, without treating layout/restoration alone as navigation intent. This is part of the existing empty-chapter/continuous-navigation contract, not a new feature or a reason to change the reviewed ViewModel.
+
+- [x] **Step 3: Render paging across individual chapter pages**
 
 Build measured pages per chapter and keep their chapter/offset identity. At the last page, continuing a forward swipe or right-edge tap enters the next verified chapter and shows its title. Backward boundary navigation remains usable. If a neighbor is not ready, a deliberate reading-edge page/action requests it and keeps the current chapter/progress until success; failure permits retry. Restoration, page-count changes, font/margin/mode changes and rotation must not be mistaken for user boundary navigation. Preserve the exact restored character anchor rather than overwriting it with a page start.
 
-- [ ] **Step 4: Connect typed callbacks and show one consistent reading position**
+- [x] **Step 4: Connect typed callbacks and show one consistent reading position**
 
 `NovelRadarApp.ReaderRoute` routes `ChapterReadingPosition` with the applicable position version; layout collectors use the current callback without leaking a previous session. Reader catalog highlights the active chapter and initially scrolls to it when opened. Top title, catalog highlight and per-chapter display derive from the same active state.
 
@@ -252,9 +254,23 @@ Show the compact progress label in both reading modes without requiring the tool
 
 Apply the Task 2 recovery presentation policy to both modes: a pending gate that rejects cross-chapter events must not render a neighboring chapter as though it were still the active chapter. Clearing it explicitly may reveal already-prepared neighbors without restarting restoration or moving the anchor.
 
-- [ ] **Step 5: Full verification, explicit commit and independent reviews**
+- [x] **Step 5: Full verification, explicit commit and independent reviews**
 
 Run all unit tests, lint, debug assembly and Android-test source compilation. Review both-mode integration, restoration and stale callback tests. Do not claim compiled Compose tests ran on a phone. Both reviews must pass before Task 4.
+
+### Task 3 verification and review
+
+Implementation `70c6ea5214c73d9df70b69611775c27b851f2d60`, parent `48b40642089d3a3a4c775a47ef628adc72a30fd3`, changes exactly eight declared files (618 insertions / 120 deletions). Root independently read the final renderers, routing/control diff, presentation helper, pure tests and newly added device-test assertions. Archived `build/evidence/Task3-RED.xml`, `Task3-cancelled-drag-RED.xml` and `Task3-short-scroll-RED.xml` preserve three assertion failures: colliding chapter keys, exact offset seven becoming zero, and a ready short/empty neighbor failing to produce its target position. Compilation failures are not used as behavioral RED evidence.
+
+The implementer's final Full4 exited 0 in one minute. Root independently repeated Full4 (exit 0, eight seconds, 61 tasks/one executed) and forced the actual whole unit task with `--rerun` (exit 0, 20 seconds, test task executed with 25 unchanged compiled prerequisites reused). Fresh XML contains **572 tests / 51 suites / zero failures, errors or skips**. Effective SARIF severities retain exactly seven existing warnings and zero errors, without new warnings or suppression. Fifteen Android UI regression methods compile; no device runtime is claimed.
+
+All known build sessions ended and writer/build ownership returned to root. No stable APK was copied or overwritten. Independent specification review found one P2 gap: the opened controls overlay reserves only 32dp, less than its actual approximately 78dp height (which grows with font scaling); paging can hide a final line. Other Task 3 contracts passed the specification inspection.
+
+The same implementer's fix `d4aa1f6d984b267203e3173612f57eb0dce3701a`, parent `70c6ea5`, changes only `ReaderScreen.kt` and its existing Android test file. Both the opened controls and hidden progress are naturally sized Column footers, and the weighted reader measures the remaining actual height. The new 36sp / font-scale 1.6 regression checks both modes' reader/footer bounds, one progress label, unchanged exact offset 17 and no navigation on controls toggling. A fresh ADB inventory was empty: this layout test compiled before and after the fix but did not execute; neither compilation is claimed as behavioral RED/GREEN. Original three assertion RED records remain the behavioral evidence.
+
+The fix's focused eight tests and Full4 (exit 0, 43 seconds) pass. Root independently read the two-file delta and repeated Full4 (exit 0, seven seconds, 61 tasks/one executed), plus actual unit `--rerun` (exit 0, 20 seconds, 26 tasks/one executed). Fresh XML again contains 572 / 51 / all zero. Root read the latest SARIF and confirmed exactly the same seven baseline warnings and zero errors. All sessions ended and app/test/build ownership returned to root.
+
+The same specification reviewer closed the P2 and passed cumulative `48b4064..d4aa1f6` (eight files, 662 insertions / 123 deletions). A fresh independent quality reviewer then passed with no Critical, Important or Minor issues requiring change, after reading actual renderers/helpers/tests, route lifecycle and ViewModel continuation transitions. Sixteen compiled Compose methods remain unexecuted device scenarios. This closes Task 3 only; Task 4's persisted directory/library display and final repaired package are still pending. No new stable APK has been saved.
 
 ## Task 4: Persisted directory/library display and repaired test APK
 
@@ -291,6 +307,8 @@ LEFT JOIN chapters current_chapter ON current_chapter.bookId = b.bookId
 The join is to the existing composite primary key, so it must not multiply the existing `c` counts. Order ties by chapter ID, consistently with the reader window. A removed saved chapter, missing selected-source catalog or another source returns null rather than promoting the old index. No persisted row is edited and schemas 1–5 remain unchanged.
 
 Extend `RoomBookRepositoryTest.kt`, `LibraryViewModelTest.kt` and the actual `app/src/androidTest/java/com/novelradar/app/data/db/NovelDatabaseTest.kt` with ordinal mapping, tied/gapped indices, source mismatch and removed saved IDs. Add an explicitly scoped host query contract helper at `app/src/test/resources/library/verify-shelf-position.ps1`, following the existing in-memory migration helper: shell reads the actual BookDao SELECT and generated schema 5, passes data by stdin to bundled Python SQLite, and executes only in-memory databases. Prove old selected-source/chapter/unread counts and labels survive, actual ordinal is correct despite a stale saved raw index, removed/foreign chapter yields null, and the stored original offset/index/hash/marker are unchanged. Observe assertion RED against the old query/projection before implementation. Do not use Python filesystem access or treat compiled Room tests as runtime evidence.
+
+Use the existing `feature/book/BookDetailViewModelTest.kt` for the actual progress subscription and failure isolation. Extend the existing Android `feature/book/BookDetailScreenTest.kt` and `feature/library/LibraryScreenTest.kt` to compile assertions for the same-source current marker and shared honest position label, including legacy/source-mismatch states. Preserve their unrelated action/identity/removal assertions; these two existing test files are explicitly within Task 4 scope. Without a connected device, state compilation only, not runtime RED/GREEN.
 
 - [ ] **Step 2: Render current/read-position labels without implying whole-book words**
 
