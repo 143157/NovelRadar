@@ -42,8 +42,7 @@ fun ReaderControls(state: ReaderUiState, paper: Color, ink: Color,
                 TextButton(onClick = onSettings) { Text("阅读设置", color = ink) }
                 TextButton(onClick = onNext, enabled = state.canNext) { Text("下一章", color = if (state.canNext) ink else ink.copy(alpha = 0.35f)) }
             }
-            val loaded = state.content
-            Text(if (loaded == null) state.sourceName else "${state.catalogPosition + 1} / ${state.chapters.size} 章 · ${state.sourceName}",
+            Text(if (state.content == null) state.sourceName else readerProgressLabel(state),
                 Modifier.align(Alignment.CenterHorizontally), fontSize = 11.sp, color = ink.copy(alpha = 0.65f))
         }
     }

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Surface
@@ -50,7 +51,7 @@ import com.novelradar.app.domain.model.SourceFailure
 fun ReaderScreen(
     state: ReaderUiState,
     onBack: () -> Unit,
-    onPositionChanged: (Int) -> Unit,
+    onPositionChanged: (ChapterReadingPosition) -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onRetry: () -> Unit,
@@ -58,6 +59,8 @@ fun ReaderScreen(
     onPreferencesChanged: ((ReaderPreferences) -> ReaderPreferences) -> Unit,
     modifier: Modifier = Modifier,
     onConfirmPosition: () -> Unit = {},
+    onContinueForward: () -> Unit = {},
+    onContinueBackward: () -> Unit = {},
 ) {
     var controlsVisible by remember { mutableStateOf(false) }
     var catalogVisible by remember { mutableStateOf(false) }
@@ -70,10 +73,17 @@ fun ReaderScreen(
 
     Box(modifier.fillMaxSize().background(colors.first).testTag("reader_center_toggle")
         .semantics { onClick("显示或隐藏阅读工具栏") { toggle(); true } }) {
-        if (state.content != null) {
+        if (state.content != null) Column(Modifier.fillMaxSize()) {
+            val readerModifier = Modifier.weight(1f).padding(bottom = if (controlsVisible) 32.dp else 0.dp)
             when (state.preferences.mode) {
-                ReaderMode.SCROLL -> ScrollReader(state, style, colors.second, onPositionChanged, toggle, onNext)
-                ReaderMode.PAGED -> PagedReader(state, style, colors.second, onPositionChanged, toggle, onPrevious, onNext)
+                ReaderMode.SCROLL -> ScrollReader(state, style, colors.second, onPositionChanged, toggle,
+                    onContinueForward, onContinueBackward, readerModifier.testTag("reader_scroll"))
+                ReaderMode.PAGED -> PagedReader(state, style, colors.second, onPositionChanged, toggle,
+                    onContinueBackward, onContinueForward, readerModifier.testTag("reader_paged"))
+            }
+            if (!controlsVisible) Surface(Modifier.fillMaxWidth(), color = colors.first) {
+                Text(readerProgressLabel(state), Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    fontSize = 11.sp, color = colors.second.copy(alpha = 0.65f))
             }
         }
         if (state.loading && state.content == null) Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -92,6 +102,14 @@ fun ReaderScreen(
         }
         if (controlsVisible) ReaderControls(state, colors.first, colors.second, onPrevious, onNext,
             { catalogVisible = true }, { settingsVisible = true }, Modifier.align(Alignment.BottomCenter))
+        if (state.continuationLoading || state.continuationError != null) Surface(
+            Modifier.align(Alignment.BottomCenter).padding(bottom = if (controlsVisible) 100.dp else 36.dp),
+            color = colors.first, contentColor = colors.second) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(if (state.continuationLoading) "正在打开相邻章节…" else "相邻章节暂时无法打开，当前章节仍可阅读", fontSize = 12.sp)
+                if (state.continuationError != null) TextButton(onClick = onRetry) { Text("重试", color = colors.second) }
+            }
+        }
 
         if (state.positionNeedsReview || state.error != null || state.notice != null) Surface(
             Modifier.align(if (state.content == null) Alignment.Center else Alignment.TopCenter)
@@ -137,7 +155,7 @@ fun ReaderScreen(
     if (catalogVisible) AlertDialog(onDismissRequest = { catalogVisible = false }, title = { Text("目录") },
         confirmButton = { TextButton(onClick = { catalogVisible = false }) { Text("关闭") } },
         text = {
-            LazyColumn {
+            LazyColumn(state = rememberLazyListState(initialFirstVisibleItemIndex = state.catalogPosition.coerceAtLeast(0))) {
                 items(state.chapters, key = { it.chapterId }) { chapter ->
                     Text(chapter.title, Modifier.fillMaxWidth().clickable {
                         catalogVisible = false

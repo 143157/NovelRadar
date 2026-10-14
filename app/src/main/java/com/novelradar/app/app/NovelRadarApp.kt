@@ -344,11 +344,11 @@ private fun ReaderRoute(bookId: String, sourceId: String, chapterId: String?, se
         }
     }
     BackHandler(onBack = leave)
-    val chapterKey = state.content?.chapter?.chapterId
-    val version = state.positionVersion
-    ReaderScreen(state, onBack = leave, onPositionChanged = { offset ->
-        chapterKey?.let { model.onPositionChanged(it, version, offset) }
+    val version by androidx.compose.runtime.rememberUpdatedState(state.positionVersion)
+    ReaderScreen(state, onBack = leave, onPositionChanged = { position ->
+        model.onVisiblePosition(version, position)
     }, onPrevious = model::previousChapter, onNext = model::nextChapter,
+        onContinueForward = { model.continueForward(version) }, onContinueBackward = { model.continueBackward(version) },
         onRetry = model::retry, onChapterSelected = model::selectChapter,
         onConfirmPosition = { scope.launch { model.confirmPosition() } },
         onPreferencesChanged = model::updatePreferences, modifier = modifier)
