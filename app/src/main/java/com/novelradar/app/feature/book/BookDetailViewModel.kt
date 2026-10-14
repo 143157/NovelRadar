@@ -37,6 +37,17 @@ class BookDetailViewModel(
     init {
         viewModelScope.launch {
             try {
+                books.progress(bookId).collect { location ->
+                    mutableState.update { it.copy(readingLocation = location) }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Progress is optional display data; source/catalog actions remain independent.
+            }
+        }
+        viewModelScope.launch {
+            try {
                 val book = catalog.book(bookId)
                 val sources = catalog.sources(bookId).first()
                 val sourceNames = catalog.sourceNames()

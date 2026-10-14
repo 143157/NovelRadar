@@ -32,6 +32,33 @@ class NovelDatabaseTest {
 
     @After fun closeDatabase() = database.close()
 
+    @Test fun shelfOrdinalUsesExistingSourceCatalogWithGapsTiesAndStaleSavedIndex() = runBlocking {
+        val books = database.bookDao()
+        books.upsertBookAndSource(book(), bookSource())
+        books.upsertSource(bookSource().copy(sourceId = "other"))
+        books.addShelfPreservingHistory("book-1", 10, "source-1")
+        database.chapterDao().upsertAll(listOf(chapter("first", 10), chapter("tie-a", 30), chapter("tie-b", 30),
+            chapter("last", 90), chapter("tie-b", 2).copy(sourceId = "other")))
+        val saved = progress(999, 77).copy(chapterId = "tie-b")
+        books.upsertProgress(saved)
+        var row = books.observeShelfDetails().first().single()
+        assertThat(row.readingChapterPosition).isEqualTo(3)
+        assertThat(row.chapterCount).isEqualTo(4)
+        assertThat(row.unreadCount).isEqualTo(0)
+        assertThat(books.getProgress("book-1")).isEqualTo(saved)
+        books.upsertProgress(saved.copy(chapterId = "removed"))
+        assertThat(books.observeShelfDetails().first().single().readingChapterPosition).isNull()
+        books.upsertProgress(saved.copy(sourceId = "other"))
+        row = books.observeShelfDetails().first().single()
+        assertThat(row.readingChapterPosition).isNull()
+        assertThat(row.unreadCount).isEqualTo(4)
+        books.upsertShelfEntry(shelfEntry(10).copy(preferredSourceId = "missing"))
+        row = books.observeShelfDetails().first().single()
+        assertThat(row.selectedSourceId).isEqualTo("other")
+        assertThat(row.readingChapterPosition).isEqualTo(1)
+        assertThat(row.chapterCount).isEqualTo(1)
+    }
+
     @Test fun downloadedMetadataCannotBeDowngradedOrUpdatedWithStaleUrl() = runBlocking {
         database.bookDao().upsertBookAndSource(book(), bookSource())
         val row = chapter("c-1", 0).copy(url = "https://example.test/one", localContentState = "DOWNLOADED")

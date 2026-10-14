@@ -25,6 +25,22 @@ class RoomBookRepositoryTest {
     private val dao = FakeBookDao()
     private val repository = RoomBookRepository(dao)
 
+    @Test fun shelfMapsActualCatalogOrdinalWithoutChangingStoredLocation() = runTest {
+        val book = repository.saveSearchHit(hit("source-a"))
+        repository.addToShelf(book.bookId, 10, "source-a")
+        val location = ReadingLocation(book.bookId, "source-a", "tie-b", 999, 77, 50,
+            contentFormatVersion = ChapterContentFormat.LEGACY)
+        repository.saveProgress(location)
+        dao.readingChapterPosition = 3
+        val shelf = repository.observeShelf().first().single()
+        assertThat(shelf.readingChapterPosition).isEqualTo(3)
+        assertThat(shelf.location).isEqualTo(location)
+        assertThat(repository.progress(book.bookId).first()).isEqualTo(location)
+        assertThat(shelf.lastReadAtEpochMillis).isEqualTo(50)
+        dao.readingChapterPosition = null
+        assertThat(repository.observeShelf().first().single().readingChapterPosition).isNull()
+    }
+
     @Test fun legacyProgressRemainsLegacyInBothProgressAndShelfWithoutChangingHistory() = runTest {
         val book = repository.saveSearchHit(hit("source-a"))
         repository.saveSearchHit(hit("source-b"))
@@ -290,6 +306,7 @@ class RoomBookRepositoryTest {
     )
 
     internal class FakeBookDao : BookDao {
+        var readingChapterPosition: Int? = null
         private val books = linkedMapOf<String, BookEntity>()
         private val sources = MutableStateFlow<List<BookSourceEntity>>(emptyList())
         private val shelf = MutableStateFlow<List<ShelfEntryEntity>>(emptyList())
@@ -314,7 +331,8 @@ class RoomBookRepositoryTest {
         override fun observeShelfDetails(): Flow<List<ShelfProjection>> = kotlinx.coroutines.flow.combine(shelf, progresses) { rows, locations ->
             rows.sortedByDescending { it.lastReadAtEpochMillis ?: it.addedAtEpochMillis }.map { row ->
                 val progress = locations.firstOrNull { it.bookId == row.bookId }
-                ShelfProjection(books.getValue(row.bookId), row, progress, row.preferredSourceId ?: progress?.sourceId, 0, 0, null)
+                ShelfProjection(books.getValue(row.bookId), row, progress, row.preferredSourceId ?: progress?.sourceId,
+                    0, 0, null, readingChapterPosition)
             }
         }
         override suspend fun removeFromShelf(bookId: String) {

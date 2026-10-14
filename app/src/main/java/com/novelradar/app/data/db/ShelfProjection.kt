@@ -13,4 +13,5 @@ data class ShelfProjection(
     val chapterCount: Int,
     val unreadCount: Int,
     val lastChapterTitle: String?,
+    val readingChapterPosition: Int? = null,
 )

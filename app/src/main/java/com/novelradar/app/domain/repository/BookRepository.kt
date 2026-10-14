@@ -17,6 +17,7 @@ data class ShelfBook(
     val chapterCount: Int = 0,
     val unreadCount: Int = 0,
     val lastChapterTitle: String? = null,
+    val readingChapterPosition: Int? = null,
 )
 
 data class ReadingLocation(

@@ -1,13 +1,25 @@
 package com.novelradar.app.feature.library
 
 import com.novelradar.app.domain.model.SourceFailure
+import com.novelradar.app.domain.model.ChapterContentFormat
 import com.novelradar.app.domain.repository.ShelfBook
 
 data class LibraryBook(val shelf: ShelfBook) {
+    private val matchingLocation get() = shelf.location?.takeIf {
+        it.bookId == shelf.book.bookId && it.sourceId == shelf.preferredSourceId
+    }
+    private val currentPosition: Int? get() = shelf.readingChapterPosition?.takeIf {
+        matchingLocation?.contentFormatVersion == ChapterContentFormat.CURRENT && it > 0 && it <= shelf.chapterCount
+    }
+    val positionLabel: String get() {
+        val location = matchingLocation ?: return "尚未开始阅读"
+        val position = currentPosition
+        return if (position != null) "读到第 $position / ${shelf.chapterCount} 章"
+        else "原阅读位置 第 ${location.chapterIndex.toLong() + 1} 章（待核对）"
+    }
     val percent: Int get() {
-        val progress = shelf.location?.takeIf { it.sourceId == shelf.preferredSourceId } ?: return 0
-        if (shelf.chapterCount == 0) return 0
-        return ((progress.chapterIndex.toLong() + 1) * 100 / shelf.chapterCount).toInt().coerceIn(0, 100)
+        val position = currentPosition ?: return 0
+        return (position.toLong() * 100 / shelf.chapterCount).toInt()
     }
 }
 
@@ -21,7 +33,8 @@ data class LibraryUiState(
     val notice: String? = null,
 ) {
     val continueReading: LibraryBook? get() = books.firstOrNull {
-        it.shelf.location != null && it.shelf.location.sourceId == it.shelf.preferredSourceId
+        it.shelf.location != null && it.shelf.location.bookId == it.shelf.book.bookId &&
+            it.shelf.location.sourceId == it.shelf.preferredSourceId
     }
 }
 

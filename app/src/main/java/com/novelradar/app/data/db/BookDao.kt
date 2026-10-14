@@ -111,7 +111,13 @@ interface BookDao {
         p.contentFormatVersion AS progress_contentFormatVersion,
         bs.sourceId AS selectedSourceId, COUNT(c.chapterId) AS chapterCount,
         SUM(CASE WHEN c.chapterId IS NOT NULL AND (p.sourceId IS NULL OR p.sourceId != bs.sourceId OR c.chapterIndex > p.chapterIndex) THEN 1 ELSE 0 END) AS unreadCount,
-        (SELECT title FROM chapters WHERE bookId = b.bookId AND sourceId = bs.sourceId ORDER BY chapterIndex DESC LIMIT 1) AS lastChapterTitle
+        (SELECT title FROM chapters WHERE bookId = b.bookId AND sourceId = bs.sourceId ORDER BY chapterIndex DESC LIMIT 1) AS lastChapterTitle,
+        CASE WHEN current_chapter.chapterId IS NOT NULL THEN
+            (SELECT COUNT(*) FROM chapters position_chapter
+             WHERE position_chapter.bookId = b.bookId AND position_chapter.sourceId = bs.sourceId
+             AND (position_chapter.chapterIndex < current_chapter.chapterIndex OR
+                 (position_chapter.chapterIndex = current_chapter.chapterIndex AND position_chapter.chapterId <= current_chapter.chapterId)))
+        ELSE NULL END AS readingChapterPosition
         FROM shelf_entries s JOIN books b ON b.bookId = s.bookId
         LEFT JOIN reading_progress p ON p.bookId = b.bookId
         LEFT JOIN book_sources bs ON bs.bookId = b.bookId AND bs.sourceId = COALESCE(
@@ -119,6 +125,8 @@ interface BookDao {
             (SELECT sourceId FROM book_sources WHERE bookId = b.bookId AND sourceId = p.sourceId),
             (SELECT sourceId FROM book_sources WHERE bookId = b.bookId ORDER BY sourceId LIMIT 1))
         LEFT JOIN chapters c ON c.bookId = b.bookId AND c.sourceId = bs.sourceId
+        LEFT JOIN chapters current_chapter ON current_chapter.bookId = b.bookId
+            AND current_chapter.sourceId = bs.sourceId AND current_chapter.chapterId = p.chapterId AND p.sourceId = bs.sourceId
         GROUP BY b.bookId ORDER BY s.lastReadAtEpochMillis DESC, s.addedAtEpochMillis DESC, b.bookId
     """)
     fun observeShelfDetails(): Flow<List<ShelfProjection>>

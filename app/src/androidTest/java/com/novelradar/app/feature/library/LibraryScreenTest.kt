@@ -4,6 +4,8 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import com.google.common.truth.Truth.assertThat
 import com.novelradar.app.domain.model.Book
+import com.novelradar.app.domain.model.ChapterContentFormat
+import com.novelradar.app.domain.repository.ReadingLocation
 import com.novelradar.app.domain.repository.ShelfBook
 import com.novelradar.app.ui.theme.NovelRadarTheme
 import org.junit.Rule
@@ -11,6 +13,29 @@ import org.junit.Test
 
 class LibraryScreenTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun continueCardAndGridSharePositionLabelAndDoNotPromoteLegacy() {
+        val shelf = ShelfBook(Book("b", "b", "星河旅人", "叶子"), 1, 50, false, "a",
+            ReadingLocation("b", "a", "chapter", 99, 77, 50), chapterCount = 3, readingChapterPosition = 2)
+        val display = androidx.compose.runtime.mutableStateOf(LibraryBook(shelf))
+        compose.setContent { NovelRadarTheme { LibraryScreen(LibraryUiState(books = listOf(display.value), loading = false),
+            {}, {}, {}, {}, {}, {}) } }
+        fun assertBothLabels(label: String) {
+            for (tag in listOf("continue_reading", "shelf_book_b")) {
+                compose.onNodeWithTag("library_grid").performScrollToNode(hasTestTag(tag))
+                compose.onNodeWithTag(tag).assertTextContains(label).assertIsDisplayed()
+            }
+        }
+        assertBothLabels("读到第 2 / 3 章")
+        compose.runOnIdle { display.value = LibraryBook(shelf.copy(location = shelf.location!!.copy(
+            contentFormatVersion = ChapterContentFormat.LEGACY))) }
+        assertBothLabels("原阅读位置 第 100 章（待核对）")
+        compose.onAllNodesWithText("读到第 2 / 3 章").assertCountEquals(0)
+        compose.runOnIdle { display.value = LibraryBook(shelf.copy(preferredSourceId = "b")) }
+        compose.onNodeWithTag("continue_reading").assertDoesNotExist()
+        compose.onNodeWithTag("library_grid").performScrollToNode(hasTestTag("shelf_book_b"))
+        compose.onNodeWithText("尚未开始阅读").assertIsDisplayed()
+    }
     @Test fun emptyShelfOffersSearch() {
         var searched = false
         compose.setContent { NovelRadarTheme { LibraryScreen(LibraryUiState(loading = false), {}, {}, {}, {}, {}, { searched = true }) } }

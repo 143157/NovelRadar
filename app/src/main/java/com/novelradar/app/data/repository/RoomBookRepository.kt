@@ -64,7 +64,7 @@ class RoomBookRepository(private val dao: BookDao) : BookRepository {
         rows.map { row ->
             ShelfBook(row.book.toDomain(), row.shelf.addedAtEpochMillis, row.shelf.lastReadAtEpochMillis,
                 row.shelf.hasUpdate, row.selectedSourceId, row.progress?.toDomain(),
-                row.chapterCount, row.unreadCount, row.lastChapterTitle)
+                row.chapterCount, row.unreadCount, row.lastChapterTitle, row.readingChapterPosition)
         }
     }
 

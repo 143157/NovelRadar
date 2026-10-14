@@ -62,6 +62,7 @@ fun BookDetailScreen(
     coverFetcher: CoverFetcher? = null,
 ) {
     val canUseSource = !state.sourceActionPending && !state.sourceIdentityMismatch && !state.loading && state.chapters.isNotEmpty()
+    val currentChapterId = state.currentChapterId
     LazyColumn(modifier.fillMaxSize().testTag("chapter_list"),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 30.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -170,12 +171,15 @@ fun BookDetailScreen(
                 }
                 if (state.loading) Text("正在加载目录…", color = QuietInk, fontSize = 12.sp)
                 else if (state.chapters.isEmpty()) Text("当前书源还没有可显示的章节", color = QuietInk, fontSize = 12.sp)
+                state.positionLabel?.let { Text(it, color = QuietInk, fontSize = 12.sp) }
             }
         }
         items(state.visibleChapters, key = { "${it.sourceId}:${it.chapterId}" }) { chapter ->
+            val current = chapter.bookId == state.book?.bookId && chapter.sourceId == state.selectedSourceId &&
+                chapter.chapterId == currentChapterId
             Surface(
                 color = CardPaper, shape = RoundedCornerShape(8.dp),
-                border = BorderStroke(1.dp, Hairline),
+                border = BorderStroke(1.dp, if (current) SignalOrange else Hairline),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).heightIn(min = 48.dp)
                     .clickable(enabled = canRead && canUseSource) { onChapterSelected(chapter) },
             ) {
@@ -183,7 +187,8 @@ fun BookDetailScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("${chapter.chapterIndex + 1}", color = QuietInk, fontSize = 12.sp,
                         fontWeight = FontWeight.Black)
-                    Text(chapter.title, color = InkBlack, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text(chapter.title, modifier = Modifier.weight(1f), color = InkBlack, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    if (current) Text("当前阅读", color = SignalOrange, fontSize = 12.sp)
                 }
             }
         }

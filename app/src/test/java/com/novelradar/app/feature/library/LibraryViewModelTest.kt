@@ -15,6 +15,37 @@ import org.junit.Test
 class LibraryViewModelTest {
     @get:Rule val main = MainDispatcherRule()
 
+    @Test fun staleIndexAndLegacyPositionNeverClaimFreshWholeBookProgress() {
+        val stale = LibraryBook(item("book", 1).copy(location = ReadingLocation("book", "a", "removed", 99, 77, 1),
+            readingChapterPosition = null))
+        assertThat(stale.percent).isEqualTo(0)
+        assertThat(stale.positionLabel).isEqualTo("原阅读位置 第 100 章（待核对）")
+        val legacy = LibraryBook(item("book", 1).copy(location = ReadingLocation("book", "a", "2", 2, 77, 1,
+            ChapterContentFormat.LEGACY)))
+        assertThat(legacy.percent).isEqualTo(0)
+        assertThat(legacy.positionLabel).isEqualTo("原阅读位置 第 3 章（待核对）")
+    }
+
+    @Test fun sharedLabelUsesActualOrdinalOnlyForMatchingCurrentPosition() {
+        val shelf = item("book", 1).copy(location = ReadingLocation("book", "a", "2", 999, 77, 1))
+        assertThat(LibraryBook(shelf).positionLabel).isEqualTo("读到第 3 / 10 章")
+        assertThat(LibraryBook(shelf).percent).isEqualTo(30)
+        for (format in listOf(ChapterContentFormat.LEGACY, 999)) {
+            val book = LibraryBook(shelf.copy(location = shelf.location!!.copy(contentFormatVersion = format)))
+            assertThat(book.positionLabel).isEqualTo("原阅读位置 第 1000 章（待核对）")
+            assertThat(book.percent).isEqualTo(0)
+        }
+        for (position in listOf(null, 0, 11)) {
+            assertThat(LibraryBook(shelf.copy(readingChapterPosition = position)).positionLabel).contains("待核对")
+            assertThat(LibraryBook(shelf.copy(readingChapterPosition = position)).percent).isEqualTo(0)
+        }
+        assertThat(LibraryBook(shelf.copy(location = null)).positionLabel).isEqualTo("尚未开始阅读")
+        assertThat(LibraryBook(shelf.copy(preferredSourceId = "b")).positionLabel).isEqualTo("尚未开始阅读")
+        val foreign = LibraryBook(shelf.copy(location = shelf.location!!.copy(bookId = "foreign")))
+        assertThat(foreign.positionLabel).isEqualTo("尚未开始阅读")
+        assertThat(LibraryUiState(books = listOf(foreign)).continueReading).isNull()
+    }
+
     @Test fun lastReadBookIsContinueTargetAndPercentUsesSelectedSourceOnly() = runTest {
         val books = MemoryShelf()
         books.shelf.value = listOf(item("old", 20), item("new", 40))
@@ -83,7 +114,7 @@ class LibraryViewModelTest {
     }
 
     private fun item(id: String, lastRead: Long) = ShelfBook(Book(id, id, id, "作者"), 1, lastRead,
-        false, "a", ReadingLocation(id, "a", "2", 2, 7, lastRead), 10, 7, "第十章")
+        false, "a", ReadingLocation(id, "a", "2", 2, 7, lastRead), 10, 7, "第十章", readingChapterPosition = 3)
 
     private class MemoryShelf : BookRepository {
         val shelf = MutableStateFlow<List<ShelfBook>>(emptyList())

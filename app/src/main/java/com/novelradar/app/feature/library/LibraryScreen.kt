@@ -68,7 +68,7 @@ fun LibraryScreen(
                         Text("继续阅读 →", color = SignalOrange, fontWeight = FontWeight.Black, fontSize = 14.sp)
                         Text(current.shelf.book.bookName, maxLines = 2, overflow = TextOverflow.Ellipsis,
                             fontWeight = FontWeight.Bold, fontSize = 21.sp)
-                        Text("上次读到第 ${(current.shelf.location?.chapterIndex ?: 0) + 1} 章 · ${current.percent}%", fontSize = 12.sp)
+                        Text(current.positionLabel, fontSize = 12.sp)
                     }
                 }
             }
@@ -91,8 +91,7 @@ fun LibraryScreen(
                     maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text("最新：${shelf.lastChapterTitle ?: "暂无目录"}", color = QuietInk, fontSize = 11.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val location = shelf.location?.takeIf { it.sourceId == shelf.preferredSourceId }
-                Text(if (location == null) "尚未开始阅读" else "已读第 ${location.chapterIndex + 1} 章 · ${item.percent}%",
+                Text(item.positionLabel,
                     color = QuietInk, fontSize = 11.sp)
                 TextButton(onClick = { onDetails(shelf.book.bookId) }, contentPadding = PaddingValues(0.dp)) {
                     Text("书籍详情", color = SignalOrange, fontSize = 12.sp)

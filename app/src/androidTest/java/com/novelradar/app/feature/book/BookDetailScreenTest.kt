@@ -15,6 +15,8 @@ import com.google.common.truth.Truth.assertThat
 import com.novelradar.app.domain.model.Book
 import com.novelradar.app.domain.model.BookSource
 import com.novelradar.app.domain.model.Chapter
+import com.novelradar.app.domain.model.ChapterContentFormat
+import com.novelradar.app.domain.repository.ReadingLocation
 import com.novelradar.app.domain.model.SourceFailure
 import com.novelradar.app.data.repository.CoverFetcher
 import com.novelradar.app.ui.theme.NovelRadarTheme
@@ -23,6 +25,20 @@ import org.junit.Test
 
 class BookDetailScreenTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun marksActualCurrentRowAndShowsHonestLegacyNoticeAfterUpdate() {
+        val display = androidx.compose.runtime.mutableStateOf(state().copy(
+            readingLocation = ReadingLocation("book-1", "a", "c1", 99, 77, 1)))
+        compose.setContent { NovelRadarTheme { BookDetailScreen(display.value, {}, {}, {}, {}, {}, {}, canRead = true) } }
+        compose.onNodeWithText("读到第 1 / 1 章").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("当前阅读").performScrollTo().assertIsDisplayed()
+        compose.runOnIdle { display.value = display.value.copy(readingLocation = display.value.readingLocation!!.copy(
+            contentFormatVersion = ChapterContentFormat.LEGACY)) }
+        compose.onNodeWithText("原阅读位置 第 100 章（待核对）").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("当前阅读").assertDoesNotExist()
+        compose.runOnIdle { display.value = display.value.copy(selectedSourceId = "b") }
+        compose.onNodeWithText("原阅读位置 第 100 章（待核对）").assertDoesNotExist()
+    }
 
     @Test fun showsSavedIntroductionAndUsesInjectedSafeCoverFetcher() {
         var requested: Pair<String, String>? = null

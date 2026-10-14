@@ -5,6 +5,7 @@ import com.novelradar.app.domain.model.Book
 import com.novelradar.app.domain.model.BookIdentityEvidence
 import com.novelradar.app.domain.model.BookSource
 import com.novelradar.app.domain.model.Chapter
+import com.novelradar.app.domain.model.ChapterContentFormat
 import com.novelradar.app.domain.model.SearchHit
 import com.novelradar.app.domain.model.SourceFailure
 import com.novelradar.app.domain.repository.BookRepository
@@ -35,6 +36,67 @@ import org.junit.runner.Description
 @OptIn(ExperimentalCoroutinesApi::class)
 class BookDetailViewModelTest {
     @get:Rule val main = MainDispatcherRule()
+
+    @Test fun directoryObservesPersistedLocationWithoutWritingOrChangingReadTarget() = runTest {
+        val books = FakeBooks()
+        val vm = BookDetailViewModel("book-1", FakeCatalog(), books)
+        backgroundScope.launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+        books.locations.value = ReadingLocation("book-1", "a", "2", 99, 177, 100)
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.currentChapterId).isEqualTo("2")
+        assertThat(vm.uiState.value.positionLabel).isEqualTo("读到第 2 / 2 章")
+        assertThat(vm.uiState.value.readingLocation?.offset).isEqualTo(177)
+        vm.toggleChapterOrder()
+        vm.onChapterQueryChanged("第二")
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.currentChapterId).isEqualTo("2")
+        assertThat(vm.uiState.value.positionLabel).isEqualTo("读到第 2 / 2 章")
+        assertThat(vm.readingTarget()).isEqualTo(BookReadTarget("a", null))
+        assertThat(vm.readingTarget(vm.uiState.value.visibleChapters.single())).isEqualTo(BookReadTarget("a", "2"))
+        vm.selectSource("b")
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.currentChapterId).isNull()
+        assertThat(vm.uiState.value.positionLabel).isNull()
+        books.locations.value = ReadingLocation("book-1", "b", "3", 0, 42, 101)
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.currentChapterId).isEqualTo("3")
+        assertThat(books.progressWrites).isEqualTo(0)
+    }
+
+    @Test fun directoryOnlyMarksExistingCurrentSameBookAndSourceAndKeepsLegacyHonest() {
+        val state = BookDetailUiState(book = Book("book-1", "key", "书名", "作者"), selectedSourceId = "a",
+            chapters = listOf(Chapter("book-1", "a", "first", 10, "第一章"),
+                Chapter("book-1", "a", "tie-b", 30, "第三章"), Chapter("book-1", "a", "tie-a", 30, "第二章")),
+            readingLocation = ReadingLocation("book-1", "a", "tie-b", 999, 77, 1))
+        assertThat(state.currentChapterId).isEqualTo("tie-b")
+        assertThat(state.positionLabel).isEqualTo("读到第 3 / 3 章")
+        for (format in listOf(ChapterContentFormat.LEGACY, 999)) {
+            val legacy = state.copy(readingLocation = state.readingLocation!!.copy(contentFormatVersion = format))
+            assertThat(legacy.currentChapterId).isNull()
+            assertThat(legacy.positionLabel).isEqualTo("原阅读位置 第 1000 章（待核对）")
+        }
+        assertThat(state.copy(chapters = emptyList()).currentChapterId).isNull()
+        assertThat(state.copy(chapters = emptyList()).positionLabel).contains("待核对")
+        assertThat(state.copy(readingLocation = state.readingLocation!!.copy(chapterId = "removed")).currentChapterId).isNull()
+        assertThat(state.copy(readingLocation = state.readingLocation.copy(bookId = "foreign")).positionLabel).isNull()
+        assertThat(state.copy(readingLocation = null).positionLabel).isNull()
+    }
+
+    @Test fun progressReadFailureDoesNotBlockCatalogOrOverwriteShelfNotice() = runTest {
+        val release = CompletableDeferred<Unit>()
+        val books = FakeBooks().apply { progressFailure = { release.await(); error("read failed") } }
+        val vm = BookDetailViewModel("book-1", FakeCatalog(), books)
+        backgroundScope.launch { vm.uiState.collect {} }
+        runCurrent()
+        vm.addToShelf()
+        runCurrent()
+        release.complete(Unit)
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.notice).isEqualTo("已加入书架")
+        assertThat(vm.readingTarget()).isEqualTo(BookReadTarget("a", null))
+        assertThat(books.progressWrites).isEqualTo(0)
+    }
 
     @Test fun confirmedWrongBookRetainsCatalogButRejectsReadingAndDownloadTarget() = runTest {
         val catalog = FakeCatalog().apply { details = { _, book -> DetailsResult(book, true,
@@ -402,6 +464,9 @@ class BookDetailViewModelTest {
     }
 
     private class FakeBooks : BookRepository {
+        val locations = MutableStateFlow<ReadingLocation?>(null)
+        var progressFailure: (suspend () -> Unit)? = null
+        var progressWrites = 0
         var added: String? = null
         var addedSource: String? = null
         var preferred: String? = null
@@ -420,8 +485,11 @@ class BookDetailViewModelTest {
         override fun observeShelf(): Flow<List<ShelfBook>> = MutableStateFlow(emptyList())
         override suspend fun addToShelf(bookId: String, atEpochMillis: Long) { added = bookId }
         override suspend fun removeFromShelf(bookId: String) = Unit
-        override fun progress(bookId: String): Flow<ReadingLocation?> = MutableStateFlow(null)
-        override suspend fun saveProgress(location: ReadingLocation) = Unit
+        override fun progress(bookId: String): Flow<ReadingLocation?> = kotlinx.coroutines.flow.flow {
+            progressFailure?.invoke()
+            locations.collect { emit(it) }
+        }
+        override suspend fun saveProgress(location: ReadingLocation) { progressWrites++ }
     }
 
     class MainDispatcherRule : TestWatcher() {
