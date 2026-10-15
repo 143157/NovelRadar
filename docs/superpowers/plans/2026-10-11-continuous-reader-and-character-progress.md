@@ -274,7 +274,17 @@ The same specification reviewer closed the P2 and passed cumulative `48b4064..d4
 
 ## Task 4: Persisted directory/library display and repaired test APK
 
-- [ ] **Step 1: Add and observe same-source persisted-position display failures**
+### Application verification checkpoint (cumulative review pending)
+
+Implementation `adabb7c3903d5eba35c683b24c9d81daeefb4042`, parent `727732299244b45668557ef93f4d4ec629e4b1b3`, changes exactly sixteen declared files (nine production, six existing tests and one host helper; 334 insertions / 15 deletions). Root independently read all production changes, unit/device-test deltas and the actual SQL helper. Archived `app/build/evidence/task4-red/` contains two assertion failures (current directory ID expected `2`, actual null; obsolete library percentage expected zero, actual 100), with zero errors/skips, plus the actual old shelf SELECT failing the missing-ordinal assertion. Focused GREEN contains 50 tests / three suites / all zero. A later removed-position fixture correction and Android import correction are not behavioral RED evidence.
+
+The implementer's final Full4 exited 0 in 32 seconds. Root independently repeated Full4 (exit 0, seven seconds, 61 tasks/one executed) and actual whole-unit `--rerun` (exit 0, 20 seconds, 26 tasks/one executed). Fresh XML contains **578 tests / 51 suites / zero failures, errors or skips**. Root read effective SARIF severities: exactly seven baseline warnings and zero errors, without additions or suppression.
+
+Root independently ran both the committed actual shelf-query/schema-5 helper and the unchanged actual migration/schema-4/5 helper. Both pass; the former includes foreign-key checking, before/after snapshots for every SELECT, ties/gaps/stale indices, source fallback, missing positions and a saved same-source position with an empty catalog. The latter preserves seven tables / eleven rows / all old fields, keys, indices, offset 77, file metadata, source choice and download checkpoints. Task 4 changes no schema/entity/migration; cumulative resource/build/manifest diff from the selected-icon application is empty and historical schemas 1–4 remain unchanged. Android tests compile only, not device runtime proof.
+
+Implementation and root build sessions ended; root owns app/test/build handoff and writes only documentation. Independent cumulative specification review passed at `adabb7c` after reading the complete Task 4 scope and cumulative source, provenance, reader and persistence interactions. A fresh final quality review is running read-only. Root's final `--rerun-tasks` exited 0 in one minute 29 seconds with **all 26 tasks executed**; fresh XML again contains 578 / 51 / all zero. Post-force Full4 exited 0 in seven seconds (61 tasks/one executed), confirming assembled output and Android test-source compatibility. Read-only APK DEX inspection confirms the new continuous-reader, real catalog-position and legacy-preserving-write code markers are present. Final quality approval and saved-package identity checks remain pending. No stable repaired APK has been saved yet.
+
+- [x] **Step 1: Add and observe same-source persisted-position display failures**
 
 Current `BookDetailViewModel` does not subscribe to reading progress and its directory rows have no current marker. Add a subscription to existing `books.progress(bookId)` and an appended `readingLocation: ReadingLocation?` state field. A progress read failure must not overwrite source-selection/detail/catalog notices or block ordinary source operations. No writes or second store here.
 
@@ -310,15 +320,15 @@ Extend `RoomBookRepositoryTest.kt`, `LibraryViewModelTest.kt` and the actual `ap
 
 Use the existing `feature/book/BookDetailViewModelTest.kt` for the actual progress subscription and failure isolation. Extend the existing Android `feature/book/BookDetailScreenTest.kt` and `feature/library/LibraryScreenTest.kt` to compile assertions for the same-source current marker and shared honest position label, including legacy/source-mismatch states. Preserve their unrelated action/identity/removal assertions; these two existing test files are explicitly within Task 4 scope. Without a connected device, state compilation only, not runtime RED/GREEN.
 
-- [ ] **Step 2: Render current/read-position labels without implying whole-book words**
+- [x] **Step 2: Render current/read-position labels without implying whole-book words**
 
 Mark the exact current detail-directory row and show its known chapter position. Preserve explicit selection start-at-zero and ordinary continue-reading restore behavior. For older chapters, label ordering-based position conservatively rather than claiming every skipped chapter was actually read. In the library use “读到第 x / N 章” from the actual ordinal for a matching CURRENT location; if retaining a percentage, explicitly label it as chapter position, never exact whole-book character completion. Legacy/unknown-format or absent-catalog locations show the known original chapter as “原阅读位置 …（待核对）” without a fresh catalog fraction or 100%. No matching saved position still means “尚未开始阅读”. Share one pure label property between the grid and continue card; legacy positions are not silently promoted.
 
-- [ ] **Step 3: Run final cumulative verification and independent reviews**
+- [x] **Step 3: Run final cumulative verification and independent reviews**
 
 Root rechecks the complete approved repair design against all source/provenance/continuous commits, actual unit reports, lint levels, icon contracts, migration preservation and stable artifact hashes. Request independent final cumulative specification review followed by quality review. Fix and re-review all required issues before packaging. Do not merge/push/create a PR without user authorization.
 
-- [ ] **Step 4: Save a separately named repaired debug APK and verify identity**
+- [x] **Step 4: Save a separately named repaired debug APK and verify identity**
 
 After the cumulative review passes, choose a distinct filename containing the repair commit. Preserve the two earlier APKs. Read actual package/version/min/target/ABIs and verify the established debug certificate, v2 signature, SHA-256, file size and selected icon bytes. If updating version metadata for this test build, use a dedicated scoped change and verify it; do not silently switch signing identity or require an uninstall. Copy only the already verified assembled artifact with overwrite disabled. Update `docs/test-apk-notes.md` with current artifact and explicit limitations.
 
@@ -335,10 +345,18 @@ Expected: exit 0; read current XML counts with zero failures/errors/skips, and S
 
 For independent checks between tasks, after the implementer's full milestone build, root may force the test task itself with `:app:testDebugUnitTest --rerun` and the same established offline/no-daemon/in-process flags. Root verified this option in the actual current Gradle task help on October 13; it executes the entire unit suite again while retaining unchanged compiled prerequisites. This is not `--test-dry-run`. The final cumulative check still uses the `--rerun-tasks` command above to rebuild all prerequisites as well. Read the exit code and newly written XML in both cases; cached test output alone is not a new test execution.
 
-- [ ] No legacy gate bypass, lost old hash/offset or destructive migration.
-- [ ] No background-preparation progress writes; one actual chapter/offset for both modes, catalog and persisted record.
-- [ ] Window/jobs bounded; settings and real network policy respected; one in-flight fetch reused.
-- [ ] Both-mode headings, exact UTF-16 restoration and Unicode display agree; append does not jump the viewport.
-- [ ] Detail and library show actual same-source reading position.
-- [ ] Cumulative independent reviews and fresh verification completed before a new stable APK is saved.
-- [ ] Previous deliverables/icon/signing identity preserved; device tests and Release limitations stated honestly.
+- [x] No legacy gate bypass, lost old hash/offset or destructive migration.
+- [x] No background-preparation progress writes; one actual chapter/offset for both modes, catalog and persisted record.
+- [x] Window/jobs bounded; settings and real network policy respected; one in-flight fetch reused.
+- [x] Both-mode headings, exact UTF-16 restoration and Unicode display agree; append does not jump the viewport.
+- [x] Detail and library show actual same-source reading position.
+- [x] Cumulative independent reviews and fresh verification completed before a new stable APK is saved.
+- [x] Previous deliverables/icon/signing identity preserved; device tests and Release limitations stated honestly.
+
+## Final repair delivery
+
+Independent final specification review and subsequent fresh cumulative quality review both passed at application `adabb7c3903d5eba35c683b24c9d81daeefb4042`, with no outstanding required findings. Root's final forced 26-task unit rebuild and post-force Full4 succeeded; fresh 578 / 51 XML and seven-warning/zero-error SARIF were independently read. All sessions ended, and only documentation changed after the reviewed application commit.
+
+On 2026-10-14 (Asia/Shanghai), root verified package `com.novelradar.app`, version `0.1.0` / code `1`, minimum API 26, target 36 and all four original ABIs. Both build output and the saved APK verify with the original RSA-2048 debug certificate SHA-256 `4AF3DFFD643A15889D42B27D56A747DA7C9124CEDD6D71FF75B54030D78A2289`, APK v2. The separate overwrite-disabled copy is `D:\NovelReader\build\deliverables\NovelRadar-0.1.0-test-repair-adabb7c.apk`, 34,229,500 bytes, SHA-256 `804262763683933C3252EB8DC384D2C632E091717867779904DA9553E908FC91`. Its exact selected icon SHA matches `EAE824602E571E34E47D5FB6B7290B26422E0061AB5E48B68DCDBA95785E1907`; both older APKs retain their original hashes.
+
+The saved test package and phone checklist are recorded in `docs/test-apk-notes.md`. No target appeared in root's final ADB inventory, so device layout/gestures, persistence/scheduling, installation and real-source speed remain unverified. This completes the approved repair test-package delivery, not Release or unrelated first-release features. The named development branch and worktree are retained; no merge, push, uninstall, deletion or cleanup was performed.

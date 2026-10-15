@@ -1,6 +1,42 @@
 # Test APK artifacts
 
-## Current selected-icon build
+## Current continuous-reading repair test build
+
+Packaged 2026-10-14 (Asia/Shanghai) from application commit `adabb7c3903d5eba35c683b24c9d81daeefb4042`. This is the repaired debug test APK requested after the user's second-package feedback, not a Release or phone-acceptance claim.
+
+### Artifact
+
+- Stable path: `D:\NovelReader\build\deliverables\NovelRadar-0.1.0-test-repair-adabb7c.apk`.
+- Size: 34,229,500 bytes.
+- SHA-256: `804262763683933C3252EB8DC384D2C632E091717867779904DA9553E908FC91`.
+- Package `com.novelradar.app`; version `0.1.0`, version code `1`; minimum API 26 (Android 8.0), target API 36.
+- Native ABIs: `arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`.
+- Existing Android Debug RSA-2048 certificate; APK v2 signature verified on both build output and saved copy.
+- Certificate SHA-256: `4AF3DFFD643A15889D42B27D56A747DA7C9124CEDD6D71FF75B54030D78A2289`.
+
+The saved file was copied with overwrite disabled only after cumulative specification and quality reviews passed. Its SHA-256 matches the verified output. The saved APK's selected icon PNG remains exactly 1,401,871 bytes with SHA-256 `EAE824602E571E34E47D5FB6B7290B26422E0061AB5E48B68DCDBA95785E1907`. The canonical artwork, drawable copy, two earlier stable APKs, package/version configuration and palette remain unchanged. APK DEX inspection confirms the new continuous-reader, real catalog-position and legacy-preserving-write code is present. No install, uninstall, user-data deletion, merge, push or worktree cleanup was performed.
+
+### Included repair and automated evidence
+
+Chapter fetching stops at real next-chapter boundaries while retaining legitimate same-chapter pagination. Existing mixed-body files and raw bookmarks remain recoverable rather than being silently erased or clamped. Scrolling and paging render individual chapter titles and actual chapter-local positions; the catalog follows that position. Unicode per-chapter read/total characters and percentage appear with catalog position in one naturally sized footer. Detail and shelf displays observe the same-source persisted location and use actual catalog ordinals rather than stale raw indices.
+
+Upcoming verified requests are bounded, reused and replenished according to the existing zero/one/two-chapter and metered-network settings. Preparation alone does not move progress. This removes known repeated work; it does not promise a fixed speed for every live source.
+
+Root independently repeated Full4 and the actual whole unit task, then performed final `:app:testDebugUnitTest --rerun-tasks`: exit 0, one minute 29 seconds, all 26 tasks executed. Fresh XML contains **578 tests / 51 suites / zero failures, errors or skips**. Post-force Full4 also exited 0 in seven seconds. Lint retains seven existing warnings and zero errors, with no new warnings or suppression. Cumulative independent specification review and subsequent quality review both passed with no outstanding required findings.
+
+Actual source SQL plus generated schemas pass the in-memory shelf-position and v4-to-v5 migration checks, including raw offsets, hashes, source choices and download history. Historical schemas 1–4 are unchanged. Android-test sources compile, including both reading modes and enlarged footer layout, but were not device-executed. Root's final ADB inventory was empty.
+
+### Phone checklist and limitations
+
+1. Use an in-place update with the same package/signing identity; do not uninstall first if you want to preserve the bookshelf, bookmarks and local chapters.
+2. In both scrolling and paging, cross several chapters and check each title, catalog highlight and chapter-local character progress. Include short/empty chapters, backward navigation and failure/retry.
+3. Reopen, rotate and change font size/mode; confirm the same character position remains. Check both hidden and opened controls with larger text.
+4. Test upcoming-cache settings and offline reading of newly verified cached chapters. Check the detail directory and shelf after leaving the reader.
+5. An old mixed-body bookmark may show “阅读位置需要确认”. Its original record is retained: choose the real chapter or explicitly confirm a suitable verified position. Do not treat an offline legacy fallback as corrected chapter progress.
+
+Actual phone layout, gesture timing, Android persistence/scheduling, installation and real-source latency still need user testing. Multi-source search queries enabled accessible sources; this package is not evidence of universal internet coverage. Unrelated first-release features and Release signing remain outside this repair delivery.
+
+## Previous selected-icon build
 
 Packaged 2026-10-05 (Asia/Shanghai) from application commit `eace59ba2b8f482822b93da0946c3f07f82313df`. This debug-signed intermediate test package includes the reviewed detail refresh/identity fixes and the user's selected launcher icon. It is not the planned locally signed Release APK or final first-release acceptance.
 
