@@ -2,17 +2,32 @@ package com.novelradar.app.feature.reader
 
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotDisplayed
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.swipeLeft
@@ -33,6 +48,103 @@ import org.junit.Test
 
 class ReaderScreenTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun bothModesIndentRealParagraphFirstLinesAndKeepWrappedLinesAtTheMargin() {
+        val initial = state()
+        val first = "天地玄黄宇宙洪荒日月盈昃辰宿列张".repeat(2)
+        val text = "$first\n" + "春夏秋冬山川日月星辰江河湖海风雨".repeat(2)
+        val body = initial.content!!.copy(content = text)
+        val live = mutableStateOf(initial.copy(content = body, verifiedWindow = listOf(body)))
+        compose.setContent { NovelRadarTheme {
+            Box(Modifier.width(280.dp).height(520.dp)) {
+                ReaderScreen(live.value, {}, {}, {}, {}, {}, {}, {})
+            }
+        } }
+
+        for (mode in listOf(ReaderMode.SCROLL, ReaderMode.PAGED)) {
+            compose.runOnIdle { live.value = live.value.copy(preferences = live.value.preferences.copy(mode = mode),
+                restorationVersion = live.value.restorationVersion + 1) }
+            val layout = textLayout(text)
+            assertThat(layout.layoutInput.text.text).isEqualTo(text)
+            assertFirstLineIndent(layout, 0)
+            assertFirstLineIndent(layout, first.length + 1)
+        }
+    }
+
+    @Test fun scrollContinuationChunkKeepsOriginalTextAndDoesNotRepeatParagraphIndent() {
+        val initial = state()
+        val text = (0 until 150).joinToString("") { "第${it}组原文甲乙丙丁" }
+        val body = initial.content!!.copy(content = text)
+        val live = initial.copy(content = body, verifiedWindow = listOf(body))
+        compose.setContent { NovelRadarTheme {
+            Box(Modifier.width(280.dp).height(520.dp)) { ReaderScreen(live, {}, {}, {}, {}, {}, {}, {}) }
+        } }
+
+        assertFirstLineIndent(textLayout(text.substring(0, 600)), 0)
+        val continued = text.substring(600, 1200)
+        compose.onNodeWithTag("reader_scroll").performScrollToNode(hasText(continued))
+        val layout = textLayout(continued)
+        assertThat(layout.layoutInput.text.text).isEqualTo(continued)
+        assertThat(layout.layoutInput.text.paragraphStyles.single().item.textIndent)
+            .isEqualTo(TextIndent(firstLine = 0.em, restLine = 0.em))
+        assertThat(layout.lineCount).isGreaterThan(1)
+        assertThat(layout.getLineLeft(0)).isWithin(0.5f).of(0f)
+        assertThat(layout.getLineLeft(1)).isWithin(0.5f).of(0f)
+    }
+
+    @Test fun pagedContinuationAndFontModeChangesKeepTheOriginalUtf16Anchor() {
+        val initial = state()
+        val text = (0 until 150).joinToString("") { "第${it}组原文😀甲乙丙丁" }
+        val body = initial.content!!.copy(content = text)
+        val live = mutableStateOf(initial.copy(content = body, verifiedWindow = listOf(body), offset = 17,
+            characterProgress = chapterCharacterProgress(text, 17)))
+        var visible: ChapterReadingPosition? = null
+        compose.setContent { NovelRadarTheme {
+            Box(Modifier.width(280.dp).height(520.dp)) {
+                ReaderScreen(live.value, {}, { visible = it }, {}, {}, {}, {}, {})
+            }
+        } }
+
+        for ((mode, fontSize) in listOf(ReaderMode.SCROLL to 20f, ReaderMode.PAGED to 20f,
+            ReaderMode.PAGED to 24f, ReaderMode.SCROLL to 24f, ReaderMode.PAGED to 24f)) {
+            compose.runOnIdle { live.value = live.value.copy(preferences = live.value.preferences.copy(mode = mode,
+                fontSizeSp = fontSize), restorationVersion = live.value.restorationVersion + 1) }
+            compose.waitForIdle()
+            compose.runOnIdle { assertThat(visible).isEqualTo(ChapterReadingPosition("c0", 17)) }
+            compose.onNodeWithText(readerProgressLabel(live.value)).assertIsDisplayed()
+        }
+
+        compose.onNodeWithTag("reader_paged").performTouchInput { swipeLeft() }
+        val viewport = compose.onNodeWithTag("reader_paged").fetchSemanticsNode().boundsInRoot
+        val bodyMatcher = SemanticsMatcher("visible original body slice") { node ->
+            val value = node.config.getOrNull(SemanticsProperties.Text)?.singleOrNull()?.text
+            value != null && value.isNotEmpty() && text.contains(value) &&
+                node.boundsInRoot.center.x in viewport.left..viewport.right
+        }
+        val bodyNodes = compose.onAllNodes(bodyMatcher, useUnmergedTree = true)
+        assertThat(bodyNodes.fetchSemanticsNodes()).hasSize(1)
+        val layouts = mutableListOf<TextLayoutResult>()
+        bodyNodes[0].performSemanticsAction(SemanticsActions.GetTextLayoutResult) { action ->
+            assertThat(action(layouts)).isTrue()
+        }
+        val layout = layouts.single()
+        val slice = layout.layoutInput.text.text
+        compose.runOnIdle {
+            val position = checkNotNull(visible)
+            assertThat(position.chapterId).isEqualTo("c0")
+            assertThat(position.offset).isGreaterThan(17)
+            assertThat(text.substring(position.offset, position.offset + slice.length)).isEqualTo(slice)
+            assertThat(text[position.offset - 1]).isNotEqualTo('\n')
+            assertThat(body.content).isEqualTo(text)
+        }
+        assertThat(layout.layoutInput.text.paragraphStyles.single().item.textIndent)
+            .isEqualTo(TextIndent(firstLine = 0.em, restLine = 0.em))
+        assertThat(layout.lineCount).isGreaterThan(1)
+        assertThat(layout.getLineLeft(0)).isWithin(0.5f).of(0f)
+        assertThat(layout.getLineLeft(1)).isWithin(0.5f).of(0f)
+        val bounds = bodyNodes[0].fetchSemanticsNode().boundsInRoot
+        assertThat(bounds.top + layout.getLineBottom(layout.lineCount - 1)).isAtMost(viewport.bottom + 0.5f)
+    }
 
     @Test fun enlargedFontControlsReserveActualFooterHeightInBothModesWithoutLosingAnchor() {
         val initial = state()
@@ -401,6 +513,25 @@ class ReaderScreenTest {
         compose.runOnIdle { live.value = live.value.copy(verifiedWindow = listOf(first, LoadedChapter(initial.chapters[1], "", ChapterOrigin.Cached))) }
         compose.onNodeWithTag("reader_heading:c0").assertIsDisplayed()
         compose.runOnIdle { assertThat(visible).isEqualTo(ChapterReadingPosition("c0", 0)); assertThat(requests).isEqualTo(0) }
+    }
+
+    private fun textLayout(text: String): TextLayoutResult {
+        val layouts = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithText(text, useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { action ->
+                assertThat(action(layouts)).isTrue()
+            }
+        assertThat(layouts).hasSize(1)
+        return layouts.single()
+    }
+
+    private fun assertFirstLineIndent(layout: TextLayoutResult, paragraphStart: Int) {
+        val line = layout.getLineForOffset(paragraphStart)
+        assertThat(layout.lineCount).isGreaterThan(line + 1)
+        val glyphWidth = layout.getBoundingBox(paragraphStart).width
+        assertThat(layout.getLineLeft(line) - layout.getLineLeft(line + 1))
+            .isWithin(1f).of(glyphWidth * 2f)
+        assertThat(layout.getLineLeft(line + 1)).isWithin(0.5f).of(0f)
     }
 
     private fun state(): ReaderUiState {

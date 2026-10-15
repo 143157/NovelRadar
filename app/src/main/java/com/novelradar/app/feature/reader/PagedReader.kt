@@ -84,7 +84,8 @@ fun PagedReader(
                             hardEnd = if (hardEnd - start > 1) hardEnd - 1 else hardEnd + 1
                         }
                         val candidate = text.substring(start, hardEnd)
-                        val layout = measurer.measure(candidate, style = textStyle, constraints = Constraints(maxWidth = width))
+                        val layout = measurer.measure(readerParagraphText(text, start, hardEnd), style = textStyle,
+                            constraints = Constraints(maxWidth = width))
                         val lastFittingLine = (0 until layout.lineCount).lastOrNull { layout.getLineBottom(it) <= bodyHeight } ?: 0
                         val fitting = layout.getLineEnd(lastFittingLine).coerceAtLeast(1)
                         val boundary = TextPaginator.paginate(candidate, fitting).first().endOffset
@@ -168,7 +169,7 @@ fun PagedReader(
                         lineHeight = if (page.startOffset == 0) 32.sp else 20.sp,
                         fontWeight = if (page.startOffset == 0) FontWeight.SemiBold else FontWeight.Normal,
                         maxLines = if (page.startOffset == 0) 2 else 1)
-                    Text(item.chapter.content.substring(page.startOffset, page.endOffset), Modifier.fillMaxWidth(), color = ink, style = textStyle)
+                    Text(readerParagraphText(item.chapter.content, page.startOffset, page.endOffset), Modifier.fillMaxWidth(), color = ink, style = textStyle)
                 }
             }
             val chapterPages = pages.filter { it.chapter.chapter.chapterId == loaded.chapter.chapterId }

@@ -126,7 +126,7 @@ fun ScrollReader(state: ReaderUiState, textStyle: TextStyle, ink: Color,
                 if (item.page == null) Text(item.chapter.chapter.title,
                     Modifier.fillMaxWidth().testTag("reader_heading:${item.chapter.chapter.chapterId}").padding(top = 12.dp, bottom = 24.dp), color = ink,
                     fontSize = 23.sp, lineHeight = 32.sp, fontWeight = FontWeight.SemiBold)
-                else Text(item.chapter.content.substring(item.page.startOffset, item.page.endOffset), Modifier.fillMaxWidth(),
+                else Text(readerParagraphText(item.chapter.content, item.page.startOffset, item.page.endOffset), Modifier.fillMaxWidth(),
                     color = ink, style = textStyle, onTextLayout = { layouts[item.key] = it })
             }
             item(key = "reader:end") {
