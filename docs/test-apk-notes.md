@@ -1,6 +1,25 @@
 # Test APK artifacts
 
-## Current continuous-reading repair test build
+## Current paragraph-indentation repair test build
+
+Packaged 2026-10-15 (Asia/Shanghai) from application commit `b15b995da1cdb00683462b0950b71e4e92ad2974`. Separately named debug test APK; not Release signing or phone acceptance.
+
+- Stable path: `D:\NovelReader\build\deliverables\NovelRadar-0.1.0-test-indent-b15b995.apk`.
+- Size: 34,229,500 bytes; SHA-256 `8C0487F1D0903D8B566B15F95D1B765EF3AB50870A28CC72FF203C76CD82154C`.
+- Package `com.novelradar.app`, version `0.1.0`, code `1`; minimum API 26, target API 36; all four existing native ABIs retained.
+- Original Android Debug RSA-2048 certificate; v2 signature verified on output and saved copy. Certificate SHA-256 `4AF3DFFD643A15889D42B27D56A747DA7C9124CEDD6D71FF75B54030D78A2289`.
+
+Both reader modes indent genuine paragraph first lines by two em units, with zero indent for wrapped lines and initial continuation paragraphs. Ordinary slices use one native text layout; a continuation uses at most two original-range fragments, consuming the first separator once at their layout boundary. Real blank lines and empty tails remain. Scroll maps composite layout positions to original UTF-16 offsets; paging measures and draws the same model and rechecks final-cut height. Stored source text, cache content, character counts, persisted bookmarks, titles, icon and palette are unchanged.
+
+Quality review rejected the initial `8986c37` candidate for possible extra blank lines from independent newline-containing style ranges; that candidate was not copied or delivered. The corrected `b15b995` passed fresh specification review and subsequent quality re-review with no outstanding findings. Saved correction evidence has RED 15 tests / 10 explicit assertion failures / zero errors or skips, then GREEN 15 / zero failures, errors or skips.
+
+Root independently repeated Full4, forced `:app:testDebugUnitTest --rerun-tasks` (exit 0, one minute six seconds, all 26 tasks executed), then repeated Full4 successfully in seven seconds. Fresh XML: **593 tests / 52 suites / zero failures, errors or skips**. Actual SARIF retains seven existing warnings and zero errors, with no suppressions. Four added native-layout regressions cover newline line counts, continuation/blank lines, original composite offsets and final page height; compiled, not device-executed. Final ADB inventory had no attached target.
+
+DEX inspection confirms corrected fragment/layout code. The selected icon remains 1,401,871 bytes, SHA-256 `EAE824602E571E34E47D5FB6B7290B26422E0061AB5E48B68DCDBA95785E1907`. The stable file was copied with overwrite disabled and its saved hash/signature verified. All three earlier APK hashes remain unchanged. No install, uninstall, deletion of user data, merge, push or worktree cleanup was performed.
+
+Phone checks: cover-install without uninstalling; test both modes' two-character paragraph starts, wrapped/continued lines, real blank lines, final page lines, chapter titles, and position/progress after font changes, mode changes and reopening. Actual phone layout remains user acceptance work. This display-only fix makes no new promise about live-source speed or universal search coverage. Frontend optimization is a separate discussion requested after delivery, not part of this APK.
+
+## Previous continuous-reading repair test build
 
 Packaged 2026-10-14 (Asia/Shanghai) from application commit `adabb7c3903d5eba35c683b24c9d81daeefb4042`. This is the repaired debug test APK requested after the user's second-package feedback, not a Release or phone-acceptance claim.
 
