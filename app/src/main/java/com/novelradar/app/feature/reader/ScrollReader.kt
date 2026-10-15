@@ -20,7 +20,6 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -45,7 +44,7 @@ fun ScrollReader(state: ReaderUiState, textStyle: TextStyle, ink: Color,
         val restoreKey = listOf(state.restorationVersion, textStyle, state.preferences.horizontalMarginDp, maxWidth)
         val anchor = remember(restoreKey) { ChapterReadingPosition(loaded.chapter.chapterId, state.offset) }
         val list = rememberLazyListState()
-        val layouts = remember(textStyle, state.preferences.horizontalMarginDp, maxWidth) { mutableStateMapOf<String, TextLayoutResult>() }
+        val layouts = remember(textStyle, state.preferences.horizontalMarginDp, maxWidth) { mutableStateMapOf<String, ReaderParagraphLayout>() }
         var pendingTarget by remember(restoreKey) { mutableStateOf<ReaderScrollTarget?>(null) }
         val requestBoundary: (Boolean) -> Unit = { towardNext ->
             val live = currentState
@@ -72,8 +71,7 @@ fun ScrollReader(state: ReaderUiState, textStyle: TextStyle, ink: Color,
             list.scrollToItem(index)
             if (item.page != null && position.offset > 0) {
                 val layout = snapshotFlow { layouts[item.key] }.filterNotNull().first()
-                val local = (position.offset - item.page.startOffset).coerceIn(0, layout.layoutInput.text.length)
-                list.scrollToItem(index, layout.getLineTop(layout.getLineForOffset(local)).toInt())
+                list.scrollToItem(index, layout.getLineTopForOffset(position.offset).toInt())
             }
             // The viewport collector reports the real heading/line after this deliberate movement.
             pendingTarget = null
@@ -90,8 +88,7 @@ fun ScrollReader(state: ReaderUiState, textStyle: TextStyle, ink: Color,
             val item = items[index]
             if (item.page != null && anchor.offset > 0) {
                 val layout = snapshotFlow { layouts[item.key] }.filterNotNull().first()
-                val local = (anchor.offset - item.page.startOffset).coerceIn(0, layout.layoutInput.text.length)
-                list.scrollToItem(index, layout.getLineTop(layout.getLineForOffset(local)).toInt())
+                list.scrollToItem(index, layout.getLineTopForOffset(anchor.offset).toInt())
             }
             restoredViewport = (list.layoutInfo.visibleItemsInfo.firstOrNull()?.key as? String ?: item.key) to list.firstVisibleItemScrollOffset
             restored = true
@@ -104,7 +101,7 @@ fun ScrollReader(state: ReaderUiState, textStyle: TextStyle, ink: Color,
                 if ((item.key to list.firstVisibleItemScrollOffset) == restoredViewport) anchor
                 else if (item.page == null) item.position()
                 else layouts[item.key]?.let { layout ->
-                    item.position(layout.getLineStart(layout.getLineForVerticalPosition(list.firstVisibleItemScrollOffset.toFloat())))
+                    item.position(layout.getLineStartForVerticalPosition(list.firstVisibleItemScrollOffset.toFloat()) - item.page.startOffset)
                 }
             }.filterNotNull().distinctUntilChanged().collect { positionChanged(it) }
         }
@@ -126,8 +123,8 @@ fun ScrollReader(state: ReaderUiState, textStyle: TextStyle, ink: Color,
                 if (item.page == null) Text(item.chapter.chapter.title,
                     Modifier.fillMaxWidth().testTag("reader_heading:${item.chapter.chapter.chapterId}").padding(top = 12.dp, bottom = 24.dp), color = ink,
                     fontSize = 23.sp, lineHeight = 32.sp, fontWeight = FontWeight.SemiBold)
-                else Text(readerParagraphText(item.chapter.content, item.page.startOffset, item.page.endOffset), Modifier.fillMaxWidth(),
-                    color = ink, style = textStyle, onTextLayout = { layouts[item.key] = it })
+                else ReaderParagraphBody(readerParagraphSlice(item.chapter.content, item.page.startOffset, item.page.endOffset),
+                    textStyle, ink, Modifier.fillMaxWidth(), onTextLayout = { layouts[item.key] = it })
             }
             item(key = "reader:end") {
                 TextButton(onClick = { requestBoundary(true) }, enabled = state.canNext && !state.positionNeedsReview && !state.continuationLoading,

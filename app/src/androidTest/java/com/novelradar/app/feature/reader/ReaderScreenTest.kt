@@ -6,15 +6,18 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
@@ -144,6 +147,133 @@ class ReaderScreenTest {
         assertThat(layout.getLineLeft(1)).isWithin(0.5f).of(0f)
         val bounds = bodyNodes[0].fetchSemanticsNode().boundsInRoot
         assertThat(bounds.top + layout.getLineBottom(layout.lineCount - 1)).isAtMost(viewport.bottom + 0.5f)
+    }
+
+    @Test fun nativeNewlinesProduceExactlyTwoOrThreeLinesInBothReaderModes() {
+        val initial = state()
+        val live = mutableStateOf(initial)
+        compose.setContent { NovelRadarTheme {
+            Box(Modifier.width(280.dp).height(520.dp)) { ReaderScreen(live.value, {}, {}, {}, {}, {}, {}, {}) }
+        } }
+
+        for (mode in listOf(ReaderMode.SCROLL, ReaderMode.PAGED)) {
+            for ((text, expectedLines) in listOf("甲\n乙" to 2, "甲\n\n乙" to 3,
+                "甲\n" to 2, "\n甲" to 2, "\n\n" to 3)) {
+                compose.runOnIdle {
+                    val body = initial.content!!.copy(content = text)
+                    live.value = live.value.copy(content = body, verifiedWindow = listOf(body), offset = 0,
+                        preferences = live.value.preferences.copy(mode = mode),
+                        restorationVersion = live.value.restorationVersion + 1)
+                }
+                val layout = textLayout(text)
+                assertThat(layout.layoutInput.text.text).isEqualTo(text)
+                assertThat(layout.lineCount).isEqualTo(expectedLines)
+                val starts = listOf(0) + text.indices.filter { text[it] == '\n' }.map { it + 1 }
+                assertThat((0 until layout.lineCount).map { layout.getLineStart(it) }).containsExactlyElementsIn(starts).inOrder()
+            }
+        }
+    }
+
+    @Test fun nativeContinuationConsumesOneSeparatorAndKeepsBlankLinesAndOriginalOffsets() {
+        val initial = state()
+        val prefix = "甲😀".repeat(200)
+        val first = initial.content!!.copy(content = prefix + "乙\n丙")
+        val live = mutableStateOf(initial.copy(content = first, verifiedWindow = listOf(first), offset = 600))
+        var visible: ChapterReadingPosition? = null
+        compose.setContent { NovelRadarTheme {
+            Box(Modifier.width(280.dp).height(520.dp)) {
+                ReaderScreen(live.value, {}, { visible = it }, {}, {}, {}, {}, {})
+            }
+        } }
+
+        for ((continued, expectedLines) in listOf("乙\n丙" to 2, "乙\n\n丙" to 3, "乙\n" to 2)) {
+            compose.runOnIdle {
+                val body = first.copy(content = prefix + continued)
+                live.value = live.value.copy(content = body, verifiedWindow = listOf(body),
+                    characterProgress = chapterCharacterProgress(body.content, 600),
+                    restorationVersion = live.value.restorationVersion + 1)
+            }
+            compose.waitForIdle()
+            val head = textLayout("乙")
+            val tailText = continued.substring(2)
+            val tail = textLayout(tailText)
+            assertThat(head.lineCount + tail.lineCount).isEqualTo(expectedLines)
+            assertThat(head.getLineLeft(0)).isWithin(0.5f).of(0f)
+            val headBounds = compose.onNodeWithText("乙", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val tailBounds = compose.onNodeWithText(tailText, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            assertThat(tailBounds.top).isWithin(0.5f).of(headBounds.bottom)
+            if (tailText.isNotEmpty()) {
+                val offset = tailText.lastIndex
+                val line = tail.getLineForOffset(offset)
+                assertThat(tail.getLineLeft(line)).isWithin(1f).of(tail.getBoundingBox(offset).width * 2f)
+            }
+            val slice = readerParagraphSlice(live.value.content!!.content, 600, live.value.content!!.content.length)
+            assertThat(slice.fragments[0].originalOffset(head.getLineStart(0))).isEqualTo(600)
+            assertThat(slice.fragments[1].originalOffset(tail.getLineStart(tail.lineCount - 1)))
+                .isEqualTo(602 + if (tailText.startsWith('\n')) 1 else 0)
+            compose.runOnIdle { assertThat(visible).isEqualTo(ChapterReadingPosition("c0", 600)) }
+            compose.onNodeWithText(readerProgressLabel(live.value)).assertIsDisplayed()
+        }
+    }
+
+    @Test fun nativeCompositeLayoutMapsContinuationAndBlankLinesBackToOriginalUtf16() {
+        val text = "甲😀乙\n\n丙丁"
+        val slice = readerParagraphSlice(text, 3, text.length)
+        var rendered: ReaderParagraphLayout? = null
+        compose.setContent { NovelRadarTheme {
+            Box(Modifier.width(280.dp)) {
+                ReaderParagraphBody(slice, TextStyle(fontSize = 20.sp, lineHeight = 33.sp), Color.Black,
+                    onTextLayout = { rendered = it })
+            }
+        } }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            val actual = checkNotNull(rendered)
+            assertThat(actual.layouts.sumOf { it.lineCount }).isEqualTo(3)
+            assertThat(actual.layouts.map { it.layoutInput.text.text }).containsExactly("乙", "\n丙丁").inOrder()
+            val headHeight = actual.layouts[0].size.height
+            val nextParagraphTop = headHeight + actual.layouts[1].getLineTop(1)
+            assertThat(actual.getLineTopForOffset(4)).isWithin(0.5f).of(0f)
+            assertThat(actual.getLineTopForOffset(5)).isWithin(0.5f).of(headHeight.toFloat())
+            assertThat(actual.getLineTopForOffset(6)).isWithin(0.5f).of(nextParagraphTop)
+            assertThat(actual.getLineStartForVerticalPosition(nextParagraphTop + 0.5f)).isEqualTo(6)
+            assertThat(actual.getLineStartForVerticalPosition(headHeight + 0.5f)).isEqualTo(5)
+            assertThat(actual.fittingEndOffset(headHeight)).isEqualTo(4)
+            assertThat(actual.fittingEndOffset(actual.height)).isEqualTo(text.length)
+            assertThat(chapterCharacterProgress(text, actual.getLineStartForVerticalPosition(nextParagraphTop + 0.5f)))
+                .isEqualTo(ChapterCharacterProgress(5, 7))
+            assertThat(slice.text).isEqualTo(text.substring(3))
+        }
+    }
+
+    @Test fun pagedFinalSliceAccountsForTheEmptyLastLineExposedByANewlineCut() {
+        val initial = state()
+        val text = "甲\n".repeat(100)
+        val body = initial.content!!.copy(content = text)
+        var density = 1f
+        compose.setContent {
+            density = LocalDensity.current.density
+            NovelRadarTheme {
+                Box(Modifier.width(280.dp).height(300.dp)) {
+                    ReaderScreen(initial.copy(content = body, verifiedWindow = listOf(body),
+                        preferences = initial.preferences.copy(mode = ReaderMode.PAGED)), {}, {}, {}, {}, {}, {}, {})
+                }
+            }
+        }
+        val viewport = compose.onNodeWithTag("reader_paged").fetchSemanticsNode().boundsInRoot
+        val bodies = compose.onAllNodes(SemanticsMatcher("visible original newline body") { node ->
+            val value = node.config.getOrNull(SemanticsProperties.Text)?.singleOrNull()?.text
+            value != null && value.isNotEmpty() && text.contains(value) &&
+                node.boundsInRoot.center.x in viewport.left..viewport.right
+        }, useUnmergedTree = true)
+        assertThat(bodies.fetchSemanticsNodes()).hasSize(1)
+        val results = mutableListOf<TextLayoutResult>()
+        bodies[0].performSemanticsAction(SemanticsActions.GetTextLayoutResult) { action -> assertThat(action(results)).isTrue() }
+        val layout = results.single()
+        assertThat(text.startsWith(layout.layoutInput.text.text)).isTrue()
+        assertThat(layout.lineCount).isGreaterThan(1)
+        val bounds = bodies[0].fetchSemanticsNode().boundsInRoot
+        assertThat(bounds.top + layout.getLineBottom(layout.lineCount - 1)).isAtMost(viewport.bottom - 40f * density + 0.5f)
     }
 
     @Test fun enlargedFontControlsReserveActualFooterHeightInBothModesWithoutLosingAnchor() {

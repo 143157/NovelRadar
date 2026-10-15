@@ -84,11 +84,17 @@ fun PagedReader(
                             hardEnd = if (hardEnd - start > 1) hardEnd - 1 else hardEnd + 1
                         }
                         val candidate = text.substring(start, hardEnd)
-                        val layout = measurer.measure(readerParagraphText(text, start, hardEnd), style = textStyle,
-                            constraints = Constraints(maxWidth = width))
-                        val lastFittingLine = (0 until layout.lineCount).lastOrNull { layout.getLineBottom(it) <= bodyHeight } ?: 0
-                        val fitting = layout.getLineEnd(lastFittingLine).coerceAtLeast(1)
-                        val boundary = TextPaginator.paginate(candidate, fitting).first().endOffset
+                        val layout = readerParagraphSlice(text, start, hardEnd).measure(measurer, textStyle, width)
+                        val fitting = (layout.fittingEndOffset(bodyHeight) - start).coerceAtLeast(1)
+                        var boundary = TextPaginator.paginate(candidate, fitting).first().endOffset
+                        // Cutting at a newline can expose an actual empty last line. Measure the final
+                        // slice too, using exactly the fragments that will be drawn on this page.
+                        while (boundary > 1 &&
+                            readerParagraphSlice(text, start, start + boundary).measure(measurer, textStyle, width).height > bodyHeight) {
+                            val smaller = TextPaginator.paginate(candidate, boundary - 1).first().endOffset
+                            if (smaller >= boundary) break // A single supplementary code point stays intact.
+                            boundary = smaller
+                        }
                         measuredPages += TextPage(start, start + boundary)
                         start += boundary
                     }
@@ -169,7 +175,8 @@ fun PagedReader(
                         lineHeight = if (page.startOffset == 0) 32.sp else 20.sp,
                         fontWeight = if (page.startOffset == 0) FontWeight.SemiBold else FontWeight.Normal,
                         maxLines = if (page.startOffset == 0) 2 else 1)
-                    Text(readerParagraphText(item.chapter.content, page.startOffset, page.endOffset), Modifier.fillMaxWidth(), color = ink, style = textStyle)
+                    ReaderParagraphBody(readerParagraphSlice(item.chapter.content, page.startOffset, page.endOffset),
+                        textStyle, ink, Modifier.fillMaxWidth())
                 }
             }
             val chapterPages = pages.filter { it.chapter.chapter.chapterId == loaded.chapter.chapterId }
