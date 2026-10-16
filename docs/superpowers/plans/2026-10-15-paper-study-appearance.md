@@ -64,8 +64,8 @@ Full4:
 
 Files: 创建 PaperStudyColors.kt、AppAppearance.kt、PaperStudyColorsTest.kt、AppAppearancePolicyTest.kt。
 
-- [ ] 增加编译 scaffold：PaperCanvas/Panel/Ink/Muted/Accent/Line 暂引用旧 CanvasWhite/CardPaper/InkBlack/QuietInk/SignalOrange/Hairline；PaperWarning 和 PaperError 暂用旧 SignalOrange。先不把 scaffold 接入 UI。
-- [ ] 写精确颜色与对比度回归：
+- [x] 增加编译 scaffold：PaperCanvas/Panel/Ink/Muted/Accent/Line 暂引用旧 CanvasWhite/CardPaper/InkBlack/QuietInk/SignalOrange/Hairline；PaperWarning 和 PaperError 暂用旧 SignalOrange。先不把 scaffold 接入 UI。
+- [x] 写精确颜色与对比度回归：
 
 ~~~kotlin
 package com.novelradar.app.ui.paper
@@ -104,7 +104,7 @@ class PaperStudyColorsTest {
 }
 ~~~
 
-- [ ] 建立纯判定函数 scaffold，初始恒 true，并加入完整四组合测试后运行 Focused，预期是颜色/判定断言失败，保存 RED XML：
+- [x] 建立纯判定函数 scaffold，初始恒 true，并加入完整四组合测试后运行 Focused，预期是颜色/判定断言失败，保存 RED XML：
 
 ~~~kotlin
 package com.novelradar.app.app
@@ -123,7 +123,7 @@ class AppAppearancePolicyTest {
 }
 ~~~
 
-- [ ] 将 scaffold 换为最终完整定义，运行 Focused 预期零失败并保存 GREEN：
+- [x] 将 scaffold 换为最终完整定义，运行 Focused 预期零失败并保存 GREEN：
 
 ~~~kotlin
 // PaperStudyColors.kt
@@ -149,7 +149,7 @@ internal fun usesPaperStudyAppearance(bookId: String?, sourceId: String?): Boole
     bookId == null || sourceId == null
 ~~~
 
-- [ ] 只提交本项四文件，commit message: feat: define paper study palette and appearance policy。
+- [x] 只提交本项四文件，commit message: feat: define paper study palette and appearance policy。
 
 ## Task 2：主题、共享组件和导航隔离
 
@@ -601,4 +601,10 @@ Get-FileHash -LiteralPath $paperTarget -Algorithm SHA256
 - [x] 核对现有 Screen/UiState/fixture 名称；AppLaunchTest 的旧“设置”期望已列为相关测试修正，产品路由保持“书源”。
 - [x] 定义新组件签名、路径、依赖顺序、单写者/单 Gradle 所有权及 RED/GREEN/设备证据边界。
 - [x] 不增加后端/API/字体依赖；未给不存在的数据编造 UI；所有业务条件与安全确认须保留。
-- [ ] 用户选择执行方式后开始 Task 1；本次仅写计划，没有改应用或重新打包。
+- [x] 用户选择方式 1：分任务开发、逐项独立审查。2026-10-15 开始执行 Task 1。
+
+## 执行记录
+
+2026-10-15：复用 D:\NovelReader\.worktrees\android-novel-reader 的既有 linked worktree，feature/android-novel-reader 分支，非 submodule，基线 dc4fe3726dc196f96279ac89d58d49921c26bd80 工作树干净。未发现适用 AGENTS.md。Root 在变更前运行 Full4，exit 0、七秒；实际 XML 为 593 tests / 52 suites / zero failures/errors/skips。此时没有运行的 Gradle 进程。Task 1 已交给独立实现者，独占四个新增 app/test 文件和 Gradle；Root 只维护文档。规格与质量审查均须在任务完成后按顺序通过，尚未标记任何实现任务完成。
+
+2026-10-16：Task 1 实现提交 0ec8913a9539ec37a44bdf014821793b8a6cccd3；精确四文件，无现有 UI/业务改动。原始 RED 为三个断言失败（非编译错误），GREEN 三项通过，证据位于 app/build/evidence/paper-study。Root 已独立重跑 testDebugUnitTest --rerun，exit 0；实际全量 XML 为 596 tests / 54 suites，failure/error/skipped 均为零。独立规格审查 PASS，质量审查在额度恢复后完成，Critical/Important/Minor 均无，ReadyToProceed=Yes。Task 1 完成；Task 2–6 尚未完成，没有交付新版外观 APK。
