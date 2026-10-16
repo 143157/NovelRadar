@@ -155,8 +155,8 @@ internal fun usesPaperStudyAppearance(bookId: String?, sourceId: String?): Boole
 
 Depends on Task 1. Files: PaperStudyTheme.kt、PaperComponents.kt、PaperNavigation.kt、四个 vector、AppAppearance.kt、NovelRadarApp.kt；测试 PaperThemeBoundaryTest.kt、PaperTestViewport.kt、AppLaunchTest.kt。
 
-- [ ] 先创建透明主题 scaffold 并写原生颜色捕获断言。外层始终用旧 NovelRadarTheme；非阅读应捕获 PaperAccent，切入阅读捕获旧 SignalOrange。无设备只编译记录，不声称运行 RED。
-- [ ] 实现独立主题，旧 Theme.kt/Color.kt 不变：
+- [x] 先创建透明主题 scaffold 并写原生颜色捕获断言。外层始终用旧 NovelRadarTheme；非阅读应捕获 PaperAccent，切入阅读捕获旧 SignalOrange。无设备只编译记录，不声称运行 RED。
+- [x] 实现独立主题，旧 Theme.kt/Color.kt 不变：
 
 ~~~kotlin
 package com.novelradar.app.ui.paper
@@ -218,7 +218,7 @@ fun PaperStudyTheme(content: @Composable () -> Unit) {
 }
 ~~~
 
-- [ ] 在 AppAppearance.kt 增加以下边界；只包现有 Scaffold 呈现，ViewModel、状态与 side effects 保持原位置。Scaffold 内容区域以 PaperContentFrame 包原 when，不复制路由：
+- [x] 在 AppAppearance.kt 增加以下边界；只包现有 Scaffold 呈现，ViewModel、状态与 side effects 保持原位置。Scaffold 内容区域以 PaperContentFrame 包原 when，不复制路由：
 
 ~~~kotlin
 @androidx.compose.runtime.Composable
@@ -246,7 +246,7 @@ internal fun PaperContentFrame(
 
 AppAppearance.kt 同时导入 fillMaxSize、widthIn、dp。NovelRadarApp 中使用 usesPaperStudyAppearance(selectedBookId, readerSourceId)；只有渲染 when 的 Modifier 经 frame 传递。所有 onRead/onBack/selectedIndex/readerSession 的赋值与条件原样保留。
 
-- [ ] PaperComponents.kt 的公共契约和实现：
+- [x] PaperComponents.kt 的公共契约和实现：
 
 ~~~kotlin
 package com.novelradar.app.ui.paper
@@ -262,8 +262,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun PaperPageHeader(title: String, subtitle: String? = null,
-    modifier: Modifier = Modifier, actions: @Composable RowScope.() -> Unit = {}) {
+fun PaperPageHeader(title: String, modifier: Modifier = Modifier,
+    subtitle: String? = null, actions: @Composable RowScope.() -> Unit = {}) {
     Column(modifier.fillMaxWidth().testTag("paper_header")) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically) {
@@ -294,7 +294,7 @@ fun PaperSheet(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
 }
 ~~~
 
-- [ ] 四个 vector 都使用以下完整公共外壳，分别把 pathData 设置为表中的实际值，每个文件恰好一个 path。不得替换 launcher 图标：
+- [x] 四个 vector 都使用以下完整公共外壳，分别把 pathData 设置为表中的实际值，每个文件恰好一个 path。不得替换 launcher 图标：
 
 ~~~xml
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
@@ -316,7 +316,7 @@ fun PaperSheet(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
 
 四个文件的描边和路径边缘均留在 viewport 内；每个矢量由调用端统一 tint。
 
-- [ ] 实现 PaperNavigation.kt；Root 保留四标签顺序，只替换其 NavigationBar 呈现为此组件，详情/阅读仍不显示导航：
+- [x] 实现 PaperNavigation.kt；Root 保留四标签顺序，只替换其 NavigationBar 呈现为此组件，详情/阅读仍不显示导航：
 
 ~~~kotlin
 package com.novelradar.app.ui.paper
@@ -345,8 +345,8 @@ fun PaperNavigation(selectedIndex: Int, onSelected: (Int) -> Unit) {
 }
 ~~~
 
-- [ ] 修正 AppLaunchTest 的 labels 为 listOf("书架", "搜书", "下载", "书源")；保留 Selected、可点击与逐项选中/其他项未选中的全部断言，不改成仅检查文本存在。
-- [ ] PaperThemeBoundaryTest.kt 捕获真实 composition，而非读取源码字符串：
+- [x] 修正 AppLaunchTest 的 labels 为 listOf("书架", "搜书", "下载", "书源")；保留 Selected、可点击与逐项选中/其他项未选中的全部断言，不改成仅检查文本存在。
+- [x] PaperThemeBoundaryTest.kt 捕获真实 composition，而非读取源码字符串：
 
 ~~~kotlin
 package com.novelradar.app.ui.paper
@@ -393,7 +393,7 @@ class PaperThemeBoundaryTest {
 }
 ~~~
 
-- [ ] 加入共用窄屏测试容器（PaperTestViewport.kt），后续各页新增布局回归使用此实际 Composable：
+- [x] 加入共用窄屏测试容器（PaperTestViewport.kt），后续各页新增布局回归使用此实际 Composable：
 
 ~~~kotlin
 package com.novelradar.app.ui.paper
@@ -418,7 +418,7 @@ internal fun PaperTestViewport(width: Dp = 320.dp, content: @Composable () -> Un
 }
 ~~~
 
-- [ ] 增加 frame 的 800dp 宽输入/600dp 内容上限、320dp 输入内容不超边界两项原生 bounds 断言；阅读分支不得被 600dp 限制。运行 Focused + Full4，读真实结果，提交本任务精确文件，message: feat: isolate paper study shell from reader。
+- [x] 增加 frame 的 800dp 宽输入/600dp 内容上限、320dp 输入内容不超边界两项原生 bounds 断言；阅读分支不得被 600dp 限制。运行 Focused + Full4，读真实结果，提交本任务精确文件，message: feat: isolate paper study shell from reader。
 
 ## 五页公共迁移规则（仅下面明确列出的 UI 文件）
 
@@ -451,7 +451,7 @@ fun NovelCover(title: String, url: String?, sourceId: String?, fetcher: CoverFet
 将其 Surface color 改为 paperColor，原 fallback Text color 改为 letterColor；不改变 produceState、ContentScale、clearAndSetSemantics、真实图片字节。书架/详情调用使用 paperColor=PaperPanel、letterColor=PaperAccent，封面 Modifier clip(RoundedCornerShape(2.dp))。没传样式的原调用保持兼容。
 
 - [ ] Library 应用公共迁移；原 header item 使用 PaperPageHeader("我的书架")，actions 中的刷新按钮保留 !state.refreshing && state.books.isNotEmpty() 条件与原 label。列数仍 GridCells.Fixed(2)，horizontalArrangement 18.dp，横向 padding20.dp。继续阅读保留 continue_reading 标签和全部 combinedClickable 回调，Row 的 Column 文本在左、72dp×104dp 封面在右，表面 PaperPanel/PaperInk；标题与真实 positionLabel 原样。网格条目保留 shelf_book_ 标签、两行书名、省略、未读和最新章节、详情按钮；长按删除和本地正文独立选项不动。
-- [ ] Search 页头替换为 PaperPageHeader("搜书", "一次查找，汇集已启用书源")。搜索提交按钮由 height(56.dp) 改为 heightIn(min=56.dp)，允许放大字体时自然增高。保留 search_input/search_submit/search_progress、IME Search、enabled 条件和失败详情展开行为。失败框标题和错误信息使用 PaperWarning/PaperError，不增加查询状态。
+- [ ] Search 页头替换为 PaperPageHeader("搜书", subtitle = "一次查找，汇集已启用书源")。搜索提交按钮由 height(56.dp) 改为 heightIn(min=56.dp)，允许放大字体时自然增高。保留 search_input/search_submit/search_progress、IME Search、enabled 条件和失败详情展开行为。失败框标题和错误信息使用 PaperWarning/PaperError，不增加查询状态。
 - [ ] SearchResultCard 去掉 5dp 橙条和 1.5dp 黑边；Surface 使用 PaperPanel、1dp PaperLine、4dp 圆角，Row 改 heightIn(min=120.dp) 并 padding12.dp。左侧保留基于 displayName 的文字封面（不传入网络 fetcher），封面底 PaperCanvas/字 PaperAccent。中间书名最多两行，作者/最新章节各至少12sp；右侧仅展示真实去重 source 数及“个书源”，数字20sp；不加入演示简介。tag、clickable 回调与 bookKey 不动。
 - [ ] 在 LibraryScreenTest 中增加可直接执行的两列/长名/详情回调测试：
 
@@ -512,7 +512,7 @@ Depends on Task 3. Files: BookDetailScreen.kt、BookDetailScreenTest.kt。
 Depends on Task 2（实际单写者顺序在 Task 4 后）。Files: DownloadsScreen.kt、DownloadDialogs.kt、SourceManagerScreen.kt、DownloadsScreenTest.kt、SourceManagerScreenTest.kt。
 
 - [ ] 先在两个既有 ScreenTest 中使用 PaperStudyTheme，保持 HTTP、删除和计费网络所有断言。新增 PaperTestViewport 场景，确认长域名、长书名、忙碌禁用仍可达；无设备不声称 UI 实测。
-- [ ] DownloadsScreen 用 PaperPageHeader("下载", "按书籍管理本地正文")；网络默认区和任务 Surface 采用 PaperSheet、8dp圆角1dp边。移除两个2dp黑框，正文数字最多20sp，所有辅助文字>=12sp。状态映射：
+- [ ] DownloadsScreen 用 PaperPageHeader("下载", subtitle = "按书籍管理本地正文")；网络默认区和任务 Surface 采用 PaperSheet、8dp圆角1dp边。移除两个2dp黑框，正文数字最多20sp，所有辅助文字>=12sp。状态映射：
 
 ~~~kotlin
 val accent = when (row.state) {
@@ -525,7 +525,7 @@ val accent = when (row.state) {
 继续展示原 row.state.label()/completed/total/percentage/bytes/chapterTitle/速度/网络策略；failed>0 的文字 PaperError。原 action 集合、FlowRow、busyTaskIds、loading/listError/settingsReady 启用条件不动。
 
 - [ ] DownloadDialogs 只迁移纸面/文字颜色，删除确认按钮 PaperError、取消/返回/开始按钮 PaperAccent；完整保留 confirmation_scope、网络选项 tags、Role.RadioButton、48dp、可滚动说明与独立回调。不能预先勾选计费网络或缩短删除范围文案。
-- [ ] Source 页头用 PaperPageHeader("书源", "只使用你启用的来源")，导入灰绿主按钮、测试全部清晰次按钮。Column 中的 LazyColumn 改用 Modifier.fillMaxWidth().weight(1f)，保留页头与操作占用后的剩余高度，不以 fillMaxSize 挤出底部。SourceRowCard 纸面与细边，开关 PaperAccent/PaperPanel；名称至少17sp，域名和来源类型至少12sp，域名 Text 添加 weight(1f)、maxLines=2 与省略。HTTP、SLOW、VERIFICATION_REQUIRED 用 PaperWarning，FAILED/删除用 PaperError，HEALTHY 用 PaperAccent，UNKNOWN 用 PaperMuted；状态文字和延迟值保持原样。内置/导入、builtIn 排序与删除限制不改。
+- [ ] Source 页头用 PaperPageHeader("书源", subtitle = "只使用你启用的来源")，导入灰绿主按钮、测试全部清晰次按钮。Column 中的 LazyColumn 改用 Modifier.fillMaxWidth().weight(1f)，保留页头与操作占用后的剩余高度，不以 fillMaxSize 挤出底部。SourceRowCard 纸面与细边，开关 PaperAccent/PaperPanel；名称至少17sp，域名和来源类型至少12sp，域名 Text 添加 weight(1f)、maxLines=2 与省略。HTTP、SLOW、VERIFICATION_REQUIRED 用 PaperWarning，FAILED/删除用 PaperError，HEALTHY 用 PaperAccent，UNKNOWN 用 PaperMuted；状态文字和延迟值保持原样。内置/导入、builtIn 排序与删除限制不改。
 - [ ] 下载测试新增 busy/错误 case（使用现有 row()），真实验证暂停被禁用且没有新回调：
 
 ~~~kotlin
@@ -608,3 +608,11 @@ Get-FileHash -LiteralPath $paperTarget -Algorithm SHA256
 2026-10-15：复用 D:\NovelReader\.worktrees\android-novel-reader 的既有 linked worktree，feature/android-novel-reader 分支，非 submodule，基线 dc4fe3726dc196f96279ac89d58d49921c26bd80 工作树干净。未发现适用 AGENTS.md。Root 在变更前运行 Full4，exit 0、七秒；实际 XML 为 593 tests / 52 suites / zero failures/errors/skips。此时没有运行的 Gradle 进程。Task 1 已交给独立实现者，独占四个新增 app/test 文件和 Gradle；Root 只维护文档。规格与质量审查均须在任务完成后按顺序通过，尚未标记任何实现任务完成。
 
 2026-10-16：Task 1 实现提交 0ec8913a9539ec37a44bdf014821793b8a6cccd3；精确四文件，无现有 UI/业务改动。原始 RED 为三个断言失败（非编译错误），GREEN 三项通过，证据位于 app/build/evidence/paper-study。Root 已独立重跑 testDebugUnitTest --rerun，exit 0；实际全量 XML 为 596 tests / 54 suites，failure/error/skipped 均为零。独立规格审查 PASS，质量审查在额度恢复后完成，Critical/Important/Minor 均无，ReadyToProceed=Yes。Task 1 完成；Task 2–6 尚未完成，没有交付新版外观 APK。
+
+2026-10-16 Task 2 技术澄清：首轮 Full4 exit 0，但新增 PaperPageHeader 的原参数顺序引入 ModifierParameter warning。Root 独立核对代码与实际 SARIF 后，批准将 modifier 移为第一个可选参数，subtitle 的类型/默认值/行为不变；尚无现有调用者，后续使用 subtitle 命名参数。本计划示例已同步修正。此为 Compose 内部 API 规范调整，不改变已确认设计或业务范围，不抑制诊断；实现者须重跑 Full4 再提交。
+
+2026-10-16 环境核对：adb devices -l 返回空设备列表，未安装/卸载应用或启动模拟器。现阶段新增 Compose 回归只可编译，不能声称真机/布局断言运行通过。Root 读取四个历史 APK 的长度与 SHA256，均与既有交付值一致；最终新版必须独立命名保存，不能覆盖旧包。
+
+2026-10-16 Task 2 实现提交 ed357a3f8dd349280574486ad1e7019d0c06388c，精确十二文件；Root 独立 Full4 会话 27178，exit 0、10s（61 tasks，1 executed/60 up-to-date），实际 XML 54 suites/596 tests、零 failure/error/skipped，实际 SARIF 为七个基线 warning/零 error。独立规格审查 PASS，无 Missing/Extra/Misinterpreted；质量审查进行中，尚未标记 Task 2 完成。新增四个 Compose 主题/尺寸回归仅编译，未设备执行。
+
+2026-10-16 Task 2 质量审查完成，Critical/Important/Minor 均无，ReadyToProceed=Yes；Task 2 清单已完成。Task 3 交给新的实现者，单写者/单 Gradle 所有权继续沿用。
