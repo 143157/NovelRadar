@@ -19,7 +19,7 @@ class AppLaunchTest {
 
     @Test
     fun showsPrimaryNavigation() {
-        val labels = listOf("书架", "搜书", "下载", "设置")
+        val labels = listOf("书架", "搜书", "下载", "书源")
         val selectable = SemanticsMatcher.keyIsDefined(SemanticsProperties.Selected)
 
         labels.forEach { label ->

@@ -12,9 +12,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
@@ -62,8 +59,7 @@ import com.novelradar.app.feature.search.SearchViewModel
 import com.novelradar.app.feature.sources.SourceManagerEvent
 import com.novelradar.app.feature.sources.SourceManagerScreen
 import com.novelradar.app.feature.sources.SourceManagerViewModel
-import com.novelradar.app.ui.theme.InkBlack
-import com.novelradar.app.ui.theme.SignalOrange
+import com.novelradar.app.ui.paper.PaperNavigation
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
@@ -192,73 +188,64 @@ fun NovelRadarApp(container: AppContainer, bootstrapState: StateFlow<SourceBoots
     }
     BackHandler(enabled = selectedBookId != null && readerSourceId == null) { selectedBookId = null }
 
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHost) },
-        containerColor = if (readerSourceId != null) readerColors(readerPreferences.theme).first else MaterialTheme.colorScheme.background,
-        bottomBar = {
-            if (selectedBookId == null) {
-                NavigationBar {
-                    destinations.forEachIndexed { index, (label, symbol) ->
-                        NavigationBarItem(
-                            selected = selectedIndex == index,
-                            onClick = { selectedIndex = index },
-                            icon = { Text(symbol, fontSize = 22.sp) },
-                            label = { Text(label) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = InkBlack,
-                                selectedTextColor = SignalOrange,
-                                indicatorColor = SignalOrange,
-                            ),
-                        )
+    val usePaper = usesPaperStudyAppearance(selectedBookId, readerSourceId)
+    PaperAppAppearance(usePaper) {
+        Scaffold(
+            snackbarHost = { SnackbarHost(snackbarHost) },
+            containerColor = if (!usePaper) readerColors(readerPreferences.theme).first else MaterialTheme.colorScheme.background,
+            bottomBar = {
+                if (selectedBookId == null) {
+                    PaperNavigation(selectedIndex, onSelected = { selectedIndex = it })
+                }
+            },
+        ) { contentPadding ->
+            val pageModifier = Modifier.fillMaxSize().padding(contentPadding)
+            PaperContentFrame(usePaper, pageModifier) { modifier ->
+                when {
+                    selectedBookId != null && readerSourceId != null -> ReaderRoute(requireNotNull(selectedBookId), requireNotNull(readerSourceId),
+                        readerChapterId, readerSession, container, {
+                            readerSourceId = null; readerChapterId = null
+                            if (readerFromShelf) selectedBookId = null
+                            readerFromShelf = false
+                        },
+                        { readerChapterId = null }, modifier)
+                    selectedBookId != null -> BookDetailRoute(requireNotNull(selectedBookId), container, downloadsViewModel, { selectedBookId = null },
+                        { sourceId, chapterId -> readerFromShelf = false; readerSourceId = sourceId; readerChapterId = chapterId; readerSession++ }, modifier)
+                    selectedIndex == 0 -> LibraryScreen(libraryState, libraryViewModel::open, libraryViewModel::refresh,
+                        libraryViewModel::requestRemoval, libraryViewModel::confirmRemoval, libraryViewModel::cancelRemoval,
+                        onSearch = { selectedIndex = 1 }, onDetails = { selectedBookId = it },
+                        coverFetcher = container.coverFetcher, modifier = modifier)
+                    selectedIndex == 1 -> SearchScreen(
+                        state = searchState,
+                        onQueryChanged = searchViewModel::onQueryChanged,
+                        onSubmit = searchViewModel::submit,
+                        onRetry = searchViewModel::retryFailed,
+                        onResultSelected = searchViewModel::selectResult,
+                        sourcesReady = preparation == SourceBootstrapState.Ready,
+                        bootstrapFailed = preparation == SourceBootstrapState.Failed,
+                        modifier = modifier,
+                    )
+                    selectedIndex == 2 -> DownloadsScreen(downloadsState, downloadsViewModel::action,
+                        downloadsViewModel::confirmAction, downloadsViewModel::dismissConfirmation,
+                        downloadsViewModel::setDefaultNetwork, downloadsViewModel::retryList,
+                        onSearch = { selectedIndex = 1 }, modifier = modifier)
+                    selectedIndex == 3 -> SourceManagerScreen(
+                        state = sourceState,
+                        onImport = sourceViewModel::requestImport,
+                        onTestAll = sourceViewModel::testAll,
+                        onToggle = sourceViewModel::requestToggle,
+                        onTestOne = sourceViewModel::testOne,
+                        onDelete = sourceViewModel::deleteUserRule,
+                        onConfirmHttp = sourceViewModel::confirmHttpEnable,
+                        onCancelHttp = sourceViewModel::cancelHttpEnable,
+                        modifier = modifier,
+                    )
+                    else -> Column(modifier, horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center) {
+                        Text(destinations[selectedIndex].first, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+                        Text("即将加入", Modifier.padding(top = 8.dp))
                     }
                 }
-            }
-        },
-    ) { contentPadding ->
-        val modifier = Modifier.fillMaxSize().padding(contentPadding)
-        when {
-            selectedBookId != null && readerSourceId != null -> ReaderRoute(requireNotNull(selectedBookId), requireNotNull(readerSourceId),
-                readerChapterId, readerSession, container, {
-                    readerSourceId = null; readerChapterId = null
-                    if (readerFromShelf) selectedBookId = null
-                    readerFromShelf = false
-                },
-                { readerChapterId = null }, modifier)
-            selectedBookId != null -> BookDetailRoute(requireNotNull(selectedBookId), container, downloadsViewModel, { selectedBookId = null },
-                { sourceId, chapterId -> readerFromShelf = false; readerSourceId = sourceId; readerChapterId = chapterId; readerSession++ }, modifier)
-            selectedIndex == 0 -> LibraryScreen(libraryState, libraryViewModel::open, libraryViewModel::refresh,
-                libraryViewModel::requestRemoval, libraryViewModel::confirmRemoval, libraryViewModel::cancelRemoval,
-                onSearch = { selectedIndex = 1 }, onDetails = { selectedBookId = it },
-                coverFetcher = container.coverFetcher, modifier = modifier)
-            selectedIndex == 1 -> SearchScreen(
-                state = searchState,
-                onQueryChanged = searchViewModel::onQueryChanged,
-                onSubmit = searchViewModel::submit,
-                onRetry = searchViewModel::retryFailed,
-                onResultSelected = searchViewModel::selectResult,
-                sourcesReady = preparation == SourceBootstrapState.Ready,
-                bootstrapFailed = preparation == SourceBootstrapState.Failed,
-                modifier = modifier,
-            )
-            selectedIndex == 2 -> DownloadsScreen(downloadsState, downloadsViewModel::action,
-                downloadsViewModel::confirmAction, downloadsViewModel::dismissConfirmation,
-                downloadsViewModel::setDefaultNetwork, downloadsViewModel::retryList,
-                onSearch = { selectedIndex = 1 }, modifier = modifier)
-            selectedIndex == 3 -> SourceManagerScreen(
-                state = sourceState,
-                onImport = sourceViewModel::requestImport,
-                onTestAll = sourceViewModel::testAll,
-                onToggle = sourceViewModel::requestToggle,
-                onTestOne = sourceViewModel::testOne,
-                onDelete = sourceViewModel::deleteUserRule,
-                onConfirmHttp = sourceViewModel::confirmHttpEnable,
-                onCancelHttp = sourceViewModel::cancelHttpEnable,
-                modifier = modifier,
-            )
-            else -> Column(modifier, horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center) {
-                Text(destinations[selectedIndex].first, fontSize = 30.sp, fontWeight = FontWeight.Bold)
-                Text("即将加入", Modifier.padding(top = 8.dp))
             }
         }
     }
