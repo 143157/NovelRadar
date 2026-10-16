@@ -8,9 +8,6 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.Density
 import com.google.common.truth.Truth.assertThat
 import com.novelradar.app.domain.model.Book
 import com.novelradar.app.domain.model.BookSource
@@ -19,7 +16,8 @@ import com.novelradar.app.domain.model.ChapterContentFormat
 import com.novelradar.app.domain.repository.ReadingLocation
 import com.novelradar.app.domain.model.SourceFailure
 import com.novelradar.app.data.repository.CoverFetcher
-import com.novelradar.app.ui.theme.NovelRadarTheme
+import com.novelradar.app.ui.paper.PaperStudyTheme
+import com.novelradar.app.ui.paper.PaperTestViewport
 import org.junit.Rule
 import org.junit.Test
 
@@ -29,7 +27,7 @@ class BookDetailScreenTest {
     @Test fun marksActualCurrentRowAndShowsHonestLegacyNoticeAfterUpdate() {
         val display = androidx.compose.runtime.mutableStateOf(state().copy(
             readingLocation = ReadingLocation("book-1", "a", "c1", 99, 77, 1)))
-        compose.setContent { NovelRadarTheme { BookDetailScreen(display.value, {}, {}, {}, {}, {}, {}, canRead = true) } }
+        compose.setContent { PaperStudyTheme { BookDetailScreen(display.value, {}, {}, {}, {}, {}, {}, canRead = true) } }
         compose.onNodeWithText("读到第 1 / 1 章").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("当前阅读").performScrollTo().assertIsDisplayed()
         compose.runOnIdle { display.value = display.value.copy(readingLocation = display.value.readingLocation!!.copy(
@@ -43,7 +41,7 @@ class BookDetailScreenTest {
     @Test fun showsSavedIntroductionAndUsesInjectedSafeCoverFetcher() {
         var requested: Pair<String, String>? = null
         compose.setContent {
-            NovelRadarTheme {
+            PaperStudyTheme {
                 BookDetailScreen(state().copy(book = state().book!!.copy(
                     coverUrl = "https://example.org/cover.jpg", introduction = "穿越群星的故事")),
                     onBack = {}, onSourceSelected = {}, onAddToShelf = {}, onRefresh = {},
@@ -59,7 +57,7 @@ class BookDetailScreenTest {
 
     @Test fun missingIntroductionAndDetailFailureKeepReadingAvailable() {
         compose.setContent {
-            NovelRadarTheme {
+            PaperStudyTheme {
                 BookDetailScreen(state().copy(detailsWarning = SourceFailure.Timeout), onBack = {},
                     onSourceSelected = {}, onAddToShelf = {}, onRefresh = {},
                     onChapterQueryChanged = {}, onToggleOrder = {}, canRead = true, canDownload = true)
@@ -72,44 +70,61 @@ class BookDetailScreenTest {
     }
 
     @Test fun confirmedIdentityMismatchDisablesReadingDownloadAndChapterClicks() {
+        var reads = 0
+        var downloads = 0
+        var chapters = 0
         compose.setContent {
-            NovelRadarTheme {
+            PaperTestViewport {
                 BookDetailScreen(state().copy(sourceIdentityMismatch = true), onBack = {},
                     onSourceSelected = {}, onAddToShelf = {}, onRefresh = {},
-                    onChapterQueryChanged = {}, onToggleOrder = {}, canRead = true, canDownload = true)
+                    onChapterQueryChanged = {}, onToggleOrder = {}, canRead = true, canDownload = true,
+                    onStartReading = { reads++ }, onDownload = { downloads++ }, onChapterSelected = { chapters++ })
             }
         }
-        compose.onNodeWithText("开始阅读").performScrollTo().assertIsNotEnabled()
-        compose.onNodeWithText("整本下载").performScrollTo().assertIsNotEnabled()
-        compose.onNodeWithText("第一章").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText("开始阅读").performScrollTo().assertIsNotEnabled().performClick()
+        compose.onNodeWithText("整本下载").performScrollTo().assertIsNotEnabled().performClick()
+        compose.onNodeWithText("第一章").performScrollTo().assertIsNotEnabled().performClick()
         compose.onNodeWithText("当前书源的作品信息与已保存书籍不一致，请选择其他书源或重新刷新核验")
             .performScrollTo().assertIsDisplayed()
+        compose.runOnIdle {
+            assertThat(reads).isEqualTo(0)
+            assertThat(downloads).isEqualTo(0)
+            assertThat(chapters).isEqualTo(0)
+        }
     }
 
     @Test fun longMetadataAndLargeTextKeepAllThreeActionsReachable() {
         val title = "跨越银河与时间的漫长旅程".repeat(4)
         val intro = "读者与旅人沿着群星寻找归途。".repeat(30)
         compose.setContent {
-            CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale = 1.5f)) {
-                NovelRadarTheme {
+            PaperTestViewport {
                     BookDetailScreen(state().copy(book = state().book!!.copy(bookName = title, introduction = intro),
                         sourceNames = mapOf("a" to "名称很长的合法小说书源".repeat(3))), onBack = {},
                         onSourceSelected = {}, onAddToShelf = {}, onRefresh = {},
                         onChapterQueryChanged = {}, onToggleOrder = {}, canRead = true, canDownload = true)
                 }
-            }
         }
         compose.onNodeWithText(title).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("加入书架").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("开始阅读").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("整本下载").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(intro).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("book_primary_actions").performScrollTo()
+        val actionBounds = listOf("加入书架", "开始阅读", "整本下载")
+            .map { compose.onNodeWithText(it).fetchSemanticsNode().boundsInRoot }
+        for (first in actionBounds.indices) for (second in first + 1 until actionBounds.size) {
+            val horizontalOverlap = minOf(actionBounds[first].right, actionBounds[second].right) -
+                maxOf(actionBounds[first].left, actionBounds[second].left)
+            val verticalOverlap = minOf(actionBounds[first].bottom, actionBounds[second].bottom) -
+                maxOf(actionBounds[first].top, actionBounds[second].top)
+            assertThat(horizontalOverlap <= 1f || verticalOverlap <= 1f).isTrue()
+        }
     }
 
     @Test fun showsBookCatalogAndSourceSwitchAction() {
         var selected: String? = null
         compose.setContent {
-            NovelRadarTheme {
+            PaperStudyTheme {
                 BookDetailScreen(state(), onBack = {}, onSourceSelected = { selected = it },
                     onAddToShelf = {}, onRefresh = {}, onChapterQueryChanged = {}, onToggleOrder = {})
             }
@@ -128,7 +143,7 @@ class BookDetailScreenTest {
         var shelved = false
         var refreshed = false
         compose.setContent {
-            NovelRadarTheme {
+            PaperStudyTheme {
                 BookDetailScreen(state(), onBack = {}, onSourceSelected = {},
                     onAddToShelf = { shelved = true }, onRefresh = { refreshed = true },
                     onChapterQueryChanged = {}, onToggleOrder = {})
@@ -145,7 +160,7 @@ class BookDetailScreenTest {
         var started = false
         var selectedChapter: String? = null
         compose.setContent {
-            NovelRadarTheme {
+            PaperStudyTheme {
                 BookDetailScreen(state(), onBack = {}, onSourceSelected = {}, onAddToShelf = {}, onRefresh = {},
                     onChapterQueryChanged = {}, onToggleOrder = {}, canRead = true,
                     onStartReading = { started = true }, onChapterSelected = { selectedChapter = it.chapterId })
@@ -157,19 +172,25 @@ class BookDetailScreenTest {
         assertThat(selectedChapter).isEqualTo("c1")
     }
 
-    @Test fun pendingSourceChoiceDisablesReadingAndDownloadActions() {
+    @Test fun paperThemeKeepsPendingSourceActionsDisabled() {
+        var reads = 0
+        var downloads = 0
         compose.setContent {
-            NovelRadarTheme {
+            PaperTestViewport {
                 BookDetailScreen(state().copy(sourceActionPending = true), onBack = {}, onSourceSelected = {},
                     onAddToShelf = {}, onRefresh = {}, onChapterQueryChanged = {}, onToggleOrder = {},
-                    canRead = true, canDownload = true)
+                    canRead = true, canDownload = true, onStartReading = { reads++ }, onDownload = { downloads++ })
             }
         }
-        compose.onNodeWithText("开始阅读").assertIsNotEnabled()
+        compose.onNodeWithText("开始阅读").performScrollTo().assertIsNotEnabled().performClick()
         compose.onNodeWithText("← 返回").assertIsNotEnabled()
-        compose.onNodeWithText("整本下载").assertIsNotEnabled()
-        compose.onNodeWithText("第一章").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText("整本下载").performScrollTo().assertIsNotEnabled().performClick()
+        compose.onNodeWithText("第一章").performScrollTo().assertIsNotEnabled().performClick()
         compose.onNodeWithText("正在保存选择…").performScrollTo().assertIsDisplayed()
+        compose.runOnIdle {
+            assertThat(reads).isEqualTo(0)
+            assertThat(downloads).isEqualTo(0)
+        }
     }
 
     private fun state() = BookDetailUiState(
