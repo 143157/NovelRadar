@@ -438,8 +438,8 @@ internal fun PaperTestViewport(width: Dp = 320.dp, content: @Composable () -> Un
 
 Depends on Task 2. Files: LibraryScreen.kt、SearchScreen.kt、SearchResultCard.kt、NovelCover.kt、LibraryScreenTest.kt、SearchScreenTest.kt。
 
-- [ ] 两个既有 ScreenTest 的非阅读主题从 NovelRadarTheme 改为 PaperStudyTheme，保留每条原断言。Library 新增窄屏长书名 case；Search 新增长结果名和忙碌/错误 case。先在代码保持旧布局时编译测试；有设备时运行指定 UI 测试捕获布局失败，没有设备如实标记编译-only。
-- [ ] NovelCover 仅添加有旧值默认参数的颜色样式；保留 fetcher 的 coroutine keys、异常处理和 AsyncImage 不变。代码改动必须是：
+- [x] 两个既有 ScreenTest 的非阅读主题从 NovelRadarTheme 改为 PaperStudyTheme，保留每条原断言。Library 新增窄屏长书名 case；Search 新增长结果名和忙碌/错误 case。先在代码保持旧布局时编译测试；有设备时运行指定 UI 测试捕获布局失败，没有设备如实标记编译-only。
+- [x] NovelCover 仅添加有旧值默认参数的颜色样式；保留 fetcher 的 coroutine keys、异常处理和 AsyncImage 不变。代码改动必须是：
 
 ~~~kotlin
 fun NovelCover(title: String, url: String?, sourceId: String?, fetcher: CoverFetcher?,
@@ -450,10 +450,10 @@ fun NovelCover(title: String, url: String?, sourceId: String?, fetcher: CoverFet
 
 将其 Surface color 改为 paperColor，原 fallback Text color 改为 letterColor；不改变 produceState、ContentScale、clearAndSetSemantics、真实图片字节。书架/详情调用使用 paperColor=PaperPanel、letterColor=PaperAccent，封面 Modifier clip(RoundedCornerShape(2.dp))。没传样式的原调用保持兼容。
 
-- [ ] Library 应用公共迁移；原 header item 使用 PaperPageHeader("我的书架")，actions 中的刷新按钮保留 !state.refreshing && state.books.isNotEmpty() 条件与原 label。列数仍 GridCells.Fixed(2)，horizontalArrangement 18.dp，横向 padding20.dp。继续阅读保留 continue_reading 标签和全部 combinedClickable 回调，Row 的 Column 文本在左、72dp×104dp 封面在右，表面 PaperPanel/PaperInk；标题与真实 positionLabel 原样。网格条目保留 shelf_book_ 标签、两行书名、省略、未读和最新章节、详情按钮；长按删除和本地正文独立选项不动。
-- [ ] Search 页头替换为 PaperPageHeader("搜书", subtitle = "一次查找，汇集已启用书源")。搜索提交按钮由 height(56.dp) 改为 heightIn(min=56.dp)，允许放大字体时自然增高。保留 search_input/search_submit/search_progress、IME Search、enabled 条件和失败详情展开行为。失败框标题和错误信息使用 PaperWarning/PaperError，不增加查询状态。
-- [ ] SearchResultCard 去掉 5dp 橙条和 1.5dp 黑边；Surface 使用 PaperPanel、1dp PaperLine、4dp 圆角，Row 改 heightIn(min=120.dp) 并 padding12.dp。左侧保留基于 displayName 的文字封面（不传入网络 fetcher），封面底 PaperCanvas/字 PaperAccent。中间书名最多两行，作者/最新章节各至少12sp；右侧仅展示真实去重 source 数及“个书源”，数字20sp；不加入演示简介。tag、clickable 回调与 bookKey 不动。
-- [ ] 在 LibraryScreenTest 中增加可直接执行的两列/长名/详情回调测试：
+- [x] Library 应用公共迁移；原 header item 使用 PaperPageHeader("我的书架")，actions 中的刷新按钮保留 !state.refreshing && state.books.isNotEmpty() 条件与原 label。列数仍 GridCells.Fixed(2)，horizontalArrangement 18.dp，横向 padding20.dp。继续阅读保留 continue_reading 标签和全部 combinedClickable 回调，Row 的 Column 文本在左、72dp×104dp 封面在右，表面 PaperPanel/PaperInk；标题与真实 positionLabel 原样。网格条目保留 shelf_book_ 标签、两行书名、省略、未读和最新章节、详情按钮；长按删除和本地正文独立选项不动。
+- [x] Search 页头替换为 PaperPageHeader("搜书", subtitle = "一次查找，汇集已启用书源")。搜索提交按钮由 height(56.dp) 改为 heightIn(min=56.dp)，允许放大字体时自然增高。保留 search_input/search_submit/search_progress、IME Search、enabled 条件和失败详情展开行为。失败框标题和错误信息使用 PaperWarning/PaperError，不增加查询状态。
+- [x] SearchResultCard 去掉 5dp 橙条和 1.5dp 黑边；Surface 使用 PaperPanel、1dp PaperLine、4dp 圆角，Row 改 heightIn(min=120.dp) 并 padding12.dp。左侧保留基于 displayName 的文字封面（不传入网络 fetcher），封面底 PaperCanvas/字 PaperAccent。中间书名最多两行，作者/最新章节各至少12sp；右侧仅展示真实去重 source 数及“个书源”，数字20sp；不加入演示简介。tag、clickable 回调与 bookKey 不动。
+- [x] 在 LibraryScreenTest 中增加可直接执行的两列/长名/详情回调测试：
 
 ~~~kotlin
 @Test fun paperShelfLongNamesKeepSeparateDetailAndOpenActions() {
@@ -475,8 +475,8 @@ fun NovelCover(title: String, url: String?, sourceId: String?, fetcher: CoverFet
 }
 ~~~
 
-- [ ] SearchScreenTest 使用既有 private state()/result()；新增窄屏搜索结果测试：PaperTestViewport 中显示 state(results=listOf(result().copy(displayName="长中文书名".repeat(8))))，点击 search_result_星河|作者，断言回调收到同一 AggregatedBookResult，作者、最新章节、源数仍存在。禁止以演示常量替换 state。
-- [ ] 运行 Full4、检查回调/禁用语义、对照 B 预览并提交精确六文件，message: feat: apply paper study shelf and search layouts。
+- [x] SearchScreenTest 使用既有 private state()/result()；新增窄屏搜索结果测试：PaperTestViewport 中显示 state(results=listOf(result().copy(displayName="长中文书名".repeat(8))))，点击 search_result_星河|作者，断言回调收到同一 AggregatedBookResult，作者、最新章节、源数仍存在。禁止以演示常量替换 state。
+- [x] 运行 Full4、检查回调/禁用语义、对照 B 预览并提交精确六文件，message: feat: apply paper study shelf and search layouts。
 
 ## Task 4：书籍详情，保留身份核验与章节位置
 
@@ -616,3 +616,7 @@ Get-FileHash -LiteralPath $paperTarget -Algorithm SHA256
 2026-10-16 Task 2 实现提交 ed357a3f8dd349280574486ad1e7019d0c06388c，精确十二文件；Root 独立 Full4 会话 27178，exit 0、10s（61 tasks，1 executed/60 up-to-date），实际 XML 54 suites/596 tests、零 failure/error/skipped，实际 SARIF 为七个基线 warning/零 error。独立规格审查 PASS，无 Missing/Extra/Misinterpreted；质量审查进行中，尚未标记 Task 2 完成。新增四个 Compose 主题/尺寸回归仅编译，未设备执行。
 
 2026-10-16 Task 2 质量审查完成，Critical/Important/Minor 均无，ReadyToProceed=Yes；Task 2 清单已完成。Task 3 交给新的实现者，单写者/单 Gradle 所有权继续沿用。
+
+2026-10-16 Task 3 首次尝试因使用额度限制中断，未落盘 app/test 改动。用户再次要求继续后，Root 于北京时间 18:54 核实已超过提示恢复时间 18:15；工作树干净、HEAD 53f16ab，无 Java/Git 进程。恢复原实现者、原模型及原六文件范围，未切换身份/模型规避限制。Task 3 仍在实施，尚无新外观 APK。
+
+2026-10-16 Task 3 完成：主实现 0c962aa1ab52a3a584137d868310ba4572cf854a，测试整数像素容差修正 1b85f4aaaa738943e46d992a731cea81813498ca，恰六文件。Root 读实际代码及测试，提出列宽允许 1px 余数，已修正并重编译原生测试。Root 独立 Full4 会话 31767 exit 0、25s（61 tasks，3 executed/58 up-to-date）；实际 XML 54 suites/596 tests、零 failure/error/skipped，SARIF 七个基线 warning/零 error。独立规格 PASS、质量 ReadyToProceed=Yes，无 Critical/Important/Minor。累计受保护目录差异为空。新增原生回归仍仅编译，未设备执行。Task 4 待实施。
