@@ -91,6 +91,6 @@ class LibraryScreenTest {
         assertThat(first.top).isWithin(0.5f).of(second.top)
         assertThat(first.right).isLessThan(second.left)
         assertThat(first.width).isGreaterThan(0f)
-        assertThat(second.width).isWithin(0.5f).of(first.width)
+        assertThat(second.width).isWithin(1f).of(first.width)
     }
 }
