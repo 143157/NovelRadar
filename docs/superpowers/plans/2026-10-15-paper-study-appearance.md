@@ -482,11 +482,11 @@ fun NovelCover(title: String, url: String?, sourceId: String?, fetcher: CoverFet
 
 Depends on Task 3. Files: BookDetailScreen.kt、BookDetailScreenTest.kt。
 
-- [ ] 先将既有原生测试主题切到 PaperStudyTheme。保留所有身份不一致、待保存禁用、保存进度与长标题测试；将已有放大字号 case 通过 PaperTestViewport 扩展至320dp，三操作须滚动可达且未重叠。
-- [ ] 应用公共颜色迁移并替换详情页头：Surface PaperCanvas、元信息 PaperInk；返回按钮保留 enabled=!state.sourceActionPending。封面78dp×112dp、2dp圆角与新可选样式；书名用 titleLarge 或 headlineLarge 自然换行，不设会裁剪长标题的定高。
-- [ ] 三操作仍为原加入书架/开始阅读/整本下载顺序及回调。主按钮 PaperAccent/PaperPanel，其余为 outline，heightIn48dp并保留原 FlowRow；canUseSource 表达式、canRead/canDownload 判定不改。
-- [ ] 简介区 PaperSheet；选择书源的选中项以 PaperAccent 底、PaperPanel 字/未选中 PaperPanel+PaperMuted 边。目录行当前项边与“当前阅读”文字 PaperAccent，其他装饰边 PaperLine。来源/章节名不固定单行；不得替换当前 positionLabel 或改 chapterIndex 的业务计算。
-- [ ] 新增 sourceIdentityMismatch case 在 PaperTestViewport 中继续验证开始阅读/整本下载/章节不可操作，sourceActionPending 同样如此；原 state() 夹具保留两个真实 source IDs。操作测试代码：
+- [x] 先将既有原生测试主题切到 PaperStudyTheme。保留所有身份不一致、待保存禁用、保存进度与长标题测试；将已有放大字号 case 通过 PaperTestViewport 扩展至320dp，三操作须滚动可达且未重叠。
+- [x] 应用公共颜色迁移并替换详情页头：Surface PaperCanvas、元信息 PaperInk；返回按钮保留 enabled=!state.sourceActionPending。封面78dp×112dp、2dp圆角与新可选样式；书名用 titleLarge 或 headlineLarge 自然换行，不设会裁剪长标题的定高。
+- [x] 三操作仍为原加入书架/开始阅读/整本下载顺序及回调。主按钮 PaperAccent/PaperPanel，其余为 outline，heightIn48dp并保留原 FlowRow；canUseSource 表达式、canRead/canDownload 判定不改。
+- [x] 简介区 PaperSheet；选择书源的选中项以 PaperAccent 底、PaperPanel 字/未选中 PaperPanel+PaperMuted 边。目录行当前项边与“当前阅读”文字 PaperAccent，其他装饰边 PaperLine。来源/章节名不固定单行；不得替换当前 positionLabel 或改 chapterIndex 的业务计算。
+- [x] 新增 sourceIdentityMismatch case 在 PaperTestViewport 中继续验证开始阅读/整本下载/章节不可操作，sourceActionPending 同样如此；原 state() 夹具保留两个真实 source IDs。操作测试代码：
 
 ~~~kotlin
 @Test fun paperThemeKeepsPendingSourceActionsDisabled() {
@@ -505,7 +505,7 @@ Depends on Task 3. Files: BookDetailScreen.kt、BookDetailScreenTest.kt。
 }
 ~~~
 
-- [ ] Full4，检查 UI-only diff 后只提交两文件，message: feat: restyle book details without changing source guards。
+- [x] Full4，检查 UI-only diff 后只提交两文件，message: feat: restyle book details without changing source guards。
 
 ## Task 5：下载、书源与相关非阅读确认弹窗
 
@@ -620,3 +620,7 @@ Get-FileHash -LiteralPath $paperTarget -Algorithm SHA256
 2026-10-16 Task 3 首次尝试因使用额度限制中断，未落盘 app/test 改动。用户再次要求继续后，Root 于北京时间 18:54 核实已超过提示恢复时间 18:15；工作树干净、HEAD 53f16ab，无 Java/Git 进程。恢复原实现者、原模型及原六文件范围，未切换身份/模型规避限制。Task 3 仍在实施，尚无新外观 APK。
 
 2026-10-16 Task 3 完成：主实现 0c962aa1ab52a3a584137d868310ba4572cf854a，测试整数像素容差修正 1b85f4aaaa738943e46d992a731cea81813498ca，恰六文件。Root 读实际代码及测试，提出列宽允许 1px 余数，已修正并重编译原生测试。Root 独立 Full4 会话 31767 exit 0、25s（61 tasks，3 executed/58 up-to-date）；实际 XML 54 suites/596 tests、零 failure/error/skipped，SARIF 七个基线 warning/零 error。独立规格 PASS、质量 ReadyToProceed=Yes，无 Critical/Important/Minor。累计受保护目录差异为空。新增原生回归仍仅编译，未设备执行。Task 4 待实施。
+
+2026-10-17 Task 4 完成并续接复验：实现 454f8e07dcf03776a2991379eaefe991324a27a7，仅详情页及其原生测试两文件。既有 pending/mismatch 用例保留全部原断言并强化为窄屏、禁用点击计数，未复制同义测试；长元信息用例在同一滚动位置检验三按钮边界。Root 已读完整差异，独立 Full4 先前 exit 0/7s；本次续接再跑会话 15137，exit 0/11s（61 tasks，1 executed/60 up-to-date）。独立解析实际 XML 为 54 suites/596 tests、零 failure/error/skipped；SARIF 仍七个基线 warning/零 error。规格 PASS、质量 ReadyToProceed=Yes，均无未完成项。实现者澄清 36634 与 63412 为两次独立 Full4，均 exit 0，已释放所有会话与写入权。原生 UI 仅编译，未设备执行。
+
+Task 5 呈现澄清：窄屏大字下书源卡操作区可采用 FlowRow 或等效自然换行，HTTP/删除弹窗的完整说明允许局部滚动；只改变布局，不修改任何条件、回调或安全文案。确认测试保留确认前回调为 false 的断言；Dialog 弹出窗口使用平台宽度，不把外部 PaperTestViewport 的宽度当作弹窗实际宽度证据。
