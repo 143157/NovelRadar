@@ -1,0 +1,616 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#F5F0E7" />
+  <meta name="description" content="NovelRadar 小说雷达：Android 多书源聚合搜索、书架、双模式阅读与离线下载。交互演示与 GitHub 下载。" />
+  <meta property="og:title" content="NovelRadar 小说雷达 · 交互演示" />
+  <meta property="og:description" content="把散落各站的书，收进一张安静的书桌。Android 多书源聚合阅读器。" />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="assets/novelradar-icon-256.png" />
+  <title>NovelRadar 小说雷达 · 把书收进一张安静的书桌</title>
+  <link rel="icon" href="assets/novelradar-icon-256.png" />
+  <link rel="stylesheet" href="demo.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-shelf" viewBox="0 0 24 24">
+      <path d="M4 5.5h5v13H4zM10.5 5.5h4v13h-4zM16 6l4-1 2.5 12.5-4 1z" />
+    </symbol>
+    <symbol id="i-search" viewBox="0 0 24 24">
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <path d="m15.5 15.5 5 5" />
+    </symbol>
+    <symbol id="i-download" viewBox="0 0 24 24">
+      <path d="M12 3v12" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M5 20h14" />
+    </symbol>
+    <symbol id="i-sources" viewBox="0 0 24 24">
+      <path d="M12 3 21 8l-9 5-9-5 9-5Z" />
+      <path d="m3 12 9 5 9-5" />
+      <path d="m3 16 9 5 9-5" />
+    </symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24">
+      <path d="M5 12h14" />
+      <path d="m13 6 6 6-6 6" />
+    </symbol>
+    <symbol id="i-github" viewBox="0 0 24 24">
+      <path d="M12 2.5a9.5 9.5 0 0 0-3 18.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 0 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.4-1.1.7-1.4-2.2-.3-4.5-1.1-4.5-4.9 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.8 0 0 .8-.3 2.8 1a9.6 9.6 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1 .5 1.5.2 2.5.1 2.8.6.7 1 1.6 1 2.7 0 3.8-2.3 4.6-4.5 4.9.4.4.7 1 .7 2v2.9c0 .3.2.6.7.5A9.5 9.5 0 0 0 12 2.5Z" />
+    </symbol>
+  </svg>
+
+  <header class="site-head">
+    <a class="brand" href="#top" aria-label="NovelRadar 首页">
+      <img src="assets/novelradar-icon-256.png" width="34" height="34" alt="" />
+      <span class="brand-copy">
+        <strong>NovelRadar</strong>
+        <small>小说雷达</small>
+      </span>
+    </a>
+    <nav class="site-nav" aria-label="主导航">
+      <a href="#product">产品</a>
+      <a href="#demo">交互演示</a>
+      <a href="#tech">技术栈</a>
+      <a href="#download">下载</a>
+    </nav>
+    <div class="head-actions">
+      <a class="ghost-link" href="https://github.com/143157/NovelRadar" target="_blank" rel="noreferrer">
+        <svg class="icon" aria-hidden="true"><use href="#i-github"></use></svg>
+        GitHub
+      </a>
+      <a class="button button-small" href="#download">下载 APK</a>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="live-dot"></span> ANDROID · LOCAL-FIRST READER</p>
+        <h1>把散落各站的书，<br /><em>收进一张安静的书桌。</em></h1>
+        <p class="lede">NovelRadar 把多书源搜索、书架、阅读和整本下载放进同一台手机。没有账号，没有云端，只有你和正在读的那一页。</p>
+        <div class="hero-actions">
+          <a class="button" href="#demo">先看交互演示 <span class="button-arrow">↓</span></a>
+          <a class="text-link" href="https://github.com/143157/NovelRadar/releases/tag/v0.1.0" target="_blank" rel="noreferrer">下载 v0.1.0 APK <span>↗</span></a>
+        </div>
+        <dl class="hero-meta">
+          <div><dt>最低系统</dt><dd>Android 8.0+</dd></div>
+          <div><dt>构建</dt><dd>Kotlin + Compose</dd></div>
+          <div><dt>许可</dt><dd>AGPL-3.0</dd></div>
+        </dl>
+      </div>
+
+      <div class="hero-stage">
+        <div class="radar" aria-hidden="true">
+          <svg viewBox="0 0 560 560" role="presentation">
+            <defs>
+              <radialGradient id="radar-glow" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="#566457" stop-opacity=".10" />
+                <stop offset="70%" stop-color="#566457" stop-opacity=".02" />
+                <stop offset="100%" stop-color="#566457" stop-opacity="0" />
+              </radialGradient>
+              <linearGradient id="radar-sweep" x1="0" y1="1" x2="1" y2="0">
+                <stop offset="0%" stop-color="#FF5A2A" stop-opacity=".26" />
+                <stop offset="100%" stop-color="#FF5A2A" stop-opacity="0" />
+              </linearGradient>
+            </defs>
+            <circle cx="280" cy="280" r="252" fill="url(#radar-glow)" stroke="#CFCFC0" stroke-width="1" />
+            <circle cx="280" cy="280" r="196" fill="none" stroke="#CFCFC0" stroke-width="1" stroke-dasharray="2 7" />
+            <circle cx="280" cy="280" r="132" fill="none" stroke="#CFCFC0" stroke-width="1" />
+            <circle cx="280" cy="280" r="66" fill="none" stroke="#CFCFC0" stroke-width="1" stroke-dasharray="2 6" />
+            <path d="M28 280h504M280 28v504" stroke="#CFCFC0" stroke-width="1" opacity=".85" />
+            <path d="M106 106l348 348M454 106 106 454" stroke="#CFCFC0" stroke-width="1" opacity=".45" />
+            <g class="radar-sweep">
+              <path d="M280 280 280 28A252 252 0 0 1 458 102Z" fill="url(#radar-sweep)" />
+              <path d="M280 280 280 28" stroke="#FF5A2A" stroke-width="1.2" opacity=".7" />
+            </g>
+            <g class="radar-nodes">
+              <g class="radar-node"><circle cx="490" cy="280" r="4" /><text x="499" y="284">01</text></g>
+              <g class="radar-node is-hit"><circle cx="462" cy="385" r="4.5" /><text x="471" y="389">02</text></g>
+              <g class="radar-node"><circle cx="385" cy="462" r="4" /><text x="394" y="466">03</text></g>
+              <g class="radar-node"><circle cx="280" cy="490" r="4" /><text x="289" y="494">04</text></g>
+              <g class="radar-node is-hit"><circle cx="175" cy="462" r="4.5" /><text x="184" y="466">05</text></g>
+              <g class="radar-node"><circle cx="98" cy="385" r="4" /><text x="107" y="389">06</text></g>
+              <g class="radar-node"><circle cx="70" cy="280" r="4" /><text x="79" y="284">07</text></g>
+              <g class="radar-node"><circle cx="98" cy="175" r="4" /><text x="107" y="179">08</text></g>
+              <g class="radar-node is-hit"><circle cx="175" cy="98" r="4.5" /><text x="184" y="102">09</text></g>
+              <g class="radar-node"><circle cx="280" cy="70" r="4" /><text x="289" y="74">10</text></g>
+              <g class="radar-node"><circle cx="385" cy="98" r="4" /><text x="394" y="102">11</text></g>
+              <g class="radar-node"><circle cx="462" cy="175" r="4" /><text x="471" y="179">12</text></g>
+            </g>
+            <g class="radar-center">
+              <rect x="266" y="266" width="28" height="28" rx="2" />
+              <path d="M274 274h12M274 280h12M274 286h8" />
+            </g>
+          </svg>
+          <span class="radar-caption radar-caption-top">12 SOURCES / 4 ONLINE</span>
+          <span class="radar-caption radar-caption-bottom">SIGNAL 06 / 12</span>
+        </div>
+
+        <div class="stage-note">
+          <span class="mono">LIVE SIGNAL</span>
+          <strong>3 个来源</strong>
+          <span>命中同一本书</span>
+        </div>
+
+        <div class="device" id="hero-device" aria-label="NovelRadar 书架界面预览">
+          <div class="device-notch" aria-hidden="true"></div>
+          <div class="app">
+            <div class="app-statusbar">
+              <span>09:41</span>
+              <span class="statusbar-right">5G <i class="battery"></i></span>
+            </div>
+            <div class="app-head">
+              <div>
+                <span class="app-kicker">NOVEL RADAR</span>
+                <h2 class="app-title" id="app-title">书架</h2>
+              </div>
+              <span class="app-chip"><i></i> DEMO</span>
+            </div>
+
+            <div class="screens" id="screens">
+              <section class="screen is-active" data-screen="library" aria-label="书架">
+                <div class="screen-meta"><span>3 本在读</span><span>2 本更新</span></div>
+                <button class="continue-card" data-open="reader" type="button">
+                  <span class="cover cover-a continue-cover"><span>长夜行舟</span><small>沈砚</small></span>
+                  <span class="continue-copy">
+                    <span class="mono">继续阅读</span>
+                    <strong>第 47 章 · 雾港</strong>
+                    <span class="continue-line">“灯在雾里亮了一夜。”</span>
+                    <span class="bar"><i style="width:68%"></i></span>
+                    <span class="continue-foot">68% · 3 分钟前</span>
+                  </span>
+                </button>
+                <div class="shelf-grid">
+                  <article class="book">
+                    <span class="cover cover-b"><span>山鬼来信</span></span>
+                    <strong>山鬼来信</strong>
+                    <small>第 12 章 · 34%</small>
+                  </article>
+                  <article class="book">
+                    <span class="cover cover-c"><span>北纬十七度</span></span>
+                    <strong>北纬十七度</strong>
+                    <small>第 8 章 · 21%</small>
+                  </article>
+                  <article class="book">
+                    <span class="cover cover-d"><span>纸上航线</span></span>
+                    <strong>纸上航线</strong>
+                    <small>第 22 章 · 57%</small>
+                  </article>
+                </div>
+                <p class="app-footnote">已下载 2 本 · 仅 Wi-Fi 自动更新</p>
+              </section>
+
+              <section class="screen" data-screen="search" aria-label="搜书">
+                <div class="screen-meta"><span>4 个来源已启用</span><span>聚合搜索</span></div>
+                <form class="search-box" id="search-form">
+                  <label class="sr-only" for="search-input">搜索书名或作者</label>
+                  <input id="search-input" name="q" value="长夜" autocomplete="off" spellcheck="false" />
+                  <button type="submit">搜索</button>
+                </form>
+                <div class="source-pills" aria-label="参与搜索的来源">
+                  <span class="is-on">主站</span><span class="is-on">备站</span><span class="is-on">镜像</span><span>自建</span>
+                </div>
+                <div class="search-result" id="search-result">
+                  <button class="result-card" data-open="reader" type="button">
+                    <span class="cover cover-a result-cover"><span>长夜行舟</span></span>
+                    <span class="result-copy">
+                      <span class="mono">3 个来源 · 已合并</span>
+                      <strong>长夜行舟</strong>
+                      <span>沈砚 · 连载中 · 128 万字</span>
+                      <span class="result-sources"><i>主站</i><i>备站</i><i>镜像</i></span>
+                    </span>
+                    <span class="result-arrow">→</span>
+                  </button>
+                </div>
+                <p class="app-footnote">一个来源超时，不会拖垮整次搜索。</p>
+              </section>
+
+              <section class="screen" data-screen="reader" aria-label="阅读器">
+                <div class="reader-bar">
+                  <button class="icon-btn" type="button" data-screen-jump="search" aria-label="返回搜书">←</button>
+                  <span>第 47 章 · 雾港</span>
+                  <span class="mono" id="reader-percent">68%</span>
+                </div>
+                <article class="reader-page" id="reader-page" data-theme="paper">
+                  <p class="reader-kicker">第四十七章</p>
+                  <h3>雾港</h3>
+                  <p>雾从江面漫上来的时候，渡口的灯刚刚亮。</p>
+                  <p>沈砚把船票折成很小的一块，塞进袖口。他没有行李，只有一本翻旧了的《水经注》。</p>
+                  <p>对岸的城叫临渊，地图上只有一条细线连着这里。线的那头，有人在等他，也有人在找他。</p>
+                  <p>船夫解开缆绳，问：“去临渊做什么？”</p>
+                  <p>他说：“找一个人。”</p>
+                  <p>船夫笑了一声，竹篙点岸，船便滑进雾里。</p>
+                </article>
+                <div class="reader-tools">
+                  <div class="tool-group">
+                    <button type="button" data-font="-1" aria-label="减小字号">A−</button>
+                    <button type="button" data-font="1" aria-label="增大字号">A+</button>
+                  </div>
+                  <div class="tool-group themes" role="group" aria-label="阅读主题">
+                    <button class="swatch is-active" type="button" data-reader-theme="paper" aria-label="纸张主题"></button>
+                    <button class="swatch" type="button" data-reader-theme="day" aria-label="日间主题"></button>
+                    <button class="swatch" type="button" data-reader-theme="night" aria-label="夜间主题"></button>
+                  </div>
+                  <button class="mode-btn" type="button" id="mode-toggle">分页</button>
+                </div>
+              </section>
+
+              <section class="screen" data-screen="downloads" aria-label="下载管理">
+                <div class="screen-meta"><span>2 个任务</span><span>仅 Wi-Fi</span></div>
+                <div class="download-row" data-download data-progress="68" data-running="第 47 / 69 章 · 2.4 MB/s">
+                  <span class="cover cover-a download-cover"><span>长夜行舟</span></span>
+                  <div class="download-copy">
+                    <div class="download-line"><strong>长夜行舟</strong><span class="mono" data-progress-label>68%</span></div>
+                    <span class="bar"><i style="width:68%"></i></span>
+                    <small>第 47 / 69 章 · 2.4 MB/s</small>
+                  </div>
+                  <button class="mini-btn" type="button" data-toggle-download>暂停</button>
+                </div>
+                <div class="download-row is-paused" data-download data-progress="24" data-running="第 3 / 18 章 · 下载中">
+                  <span class="cover cover-b download-cover"><span>山鬼来信</span></span>
+                  <div class="download-copy">
+                    <div class="download-line"><strong>山鬼来信</strong><span class="mono" data-progress-label>24%</span></div>
+                    <span class="bar"><i style="width:24%"></i></span>
+                    <small>第 3 / 18 章 · 已暂停</small>
+                  </div>
+                  <button class="mini-btn" type="button" data-toggle-download>继续</button>
+                </div>
+                <div class="download-row is-done" data-download data-progress="100">
+                  <span class="cover cover-c download-cover"><span>北纬十七度</span></span>
+                  <div class="download-copy">
+                    <div class="download-line"><strong>北纬十七度</strong><span class="mono" data-progress-label>100%</span></div>
+                    <span class="bar"><i style="width:100%"></i></span>
+                    <small>已完成 · 可离线阅读</small>
+                  </div>
+                  <button class="mini-btn" type="button" disabled>已读</button>
+                </div>
+                <p class="app-footnote">章节逐章写入，中断后从检查点继续。</p>
+              </section>
+
+              <section class="screen" data-screen="sources" aria-label="书源管理">
+                <div class="screen-meta"><span>12 条内置规则</span><button class="mini-btn" type="button" id="test-sources">测试全部</button></div>
+                <div class="source-row" data-source>
+                  <div><strong>主站规则</strong><small data-note="HTTPS · 128ms">HTTPS · 128ms</small></div>
+                  <span class="health is-ok" data-health>健康</span>
+                  <label class="switch"><input type="checkbox" checked aria-label="启用主站规则" /><span></span></label>
+                </div>
+                <div class="source-row" data-source>
+                  <div><strong>备站规则</strong><small data-note="HTTPS · 246ms">HTTPS · 246ms</small></div>
+                  <span class="health is-ok" data-health>健康</span>
+                  <label class="switch"><input type="checkbox" checked aria-label="启用备站规则" /><span></span></label>
+                </div>
+                <div class="source-row" data-source>
+                  <div><strong>镜像规则</strong><small data-note="HTTPS · 410ms">HTTPS · 410ms</small></div>
+                  <span class="health is-slow" data-health>较慢</span>
+                  <label class="switch"><input type="checkbox" checked aria-label="启用镜像规则" /><span></span></label>
+                </div>
+                <div class="source-row" data-source>
+                  <div><strong>自建规则</strong><small data-note="HTTP · 需确认">HTTP · 已停用</small></div>
+                  <span class="health" data-health>已停用</span>
+                  <label class="switch"><input type="checkbox" aria-label="启用自建规则" /><span></span></label>
+                </div>
+                <p class="app-footnote">只访问公开页面，不绕过站点访问控制。</p>
+              </section>
+            </div>
+
+            <nav class="app-nav" aria-label="应用导航">
+              <button class="is-active" type="button" data-screen="library" aria-pressed="true">
+                <svg class="icon" aria-hidden="true"><use href="#i-shelf"></use></svg><span>书架</span>
+              </button>
+              <button type="button" data-screen="search" aria-pressed="false">
+                <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg><span>搜书</span>
+              </button>
+              <button type="button" data-screen="downloads" aria-pressed="false">
+                <svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg><span>下载</span>
+              </button>
+              <button type="button" data-screen="sources" aria-pressed="false">
+                <svg class="icon" aria-hidden="true"><use href="#i-sources"></use></svg><span>书源</span>
+              </button>
+            </nav>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="ledger" aria-label="项目概览">
+      <div><span>并发搜索</span><strong>6 路</strong></div>
+      <div><span>内置书源</span><strong>12 条</strong></div>
+      <div><span>自动化测试</span><strong>596 项</strong></div>
+      <div><span>自建服务器</span><strong>0 台</strong></div>
+    </section>
+
+    <section class="section" id="product">
+      <header class="section-head">
+        <p class="section-label">01 / SIGNAL</p>
+        <div>
+          <h2>一本书，不该被埋在十几个站点里。</h2>
+          <p>NovelRadar 用配置驱动的书源规则连接不同站点，把搜索、详情、目录和正文解析拆成同一条可测试的管线。你看到的是一张结果卡，背后是并发、去重与失败隔离。</p>
+        </div>
+      </header>
+      <div class="principle-grid">
+        <article class="principle">
+          <p class="mono">SEARCH / 01</p>
+          <h3>多源并行，只留一张卡片</h3>
+          <p>同时询问已启用的书源，按书名与作者合并结果。一个来源超时或解析失败，只影响它自己的状态。</p>
+        </article>
+        <article class="principle">
+          <p class="mono">LOCAL / 02</p>
+          <h3>书在手机里，不在云上</h3>
+          <p>Room 保存书架与进度，章节正文独立文件原子写入。断网时，已下载的章节仍然能读。</p>
+        </article>
+        <article class="principle">
+          <p class="mono">PAPER / 03</p>
+          <h3>把界面调成纸的颜色</h3>
+          <p>日间、纸张、夜间三套主题；字号、行距、页边距都能改。阅读器只做一件事：让正文留在视线里。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="demo-section" id="demo">
+      <div class="demo-inner">
+        <header class="section-head">
+          <p class="section-label">02 / DEMO</p>
+          <div>
+            <h2>像用手机一样，试一遍。</h2>
+            <p>这不是视频，也不是截图。点一下搜书、翻到阅读器、暂停一次下载，看看它真正的工作方式。</p>
+          </div>
+        </header>
+
+        <div class="demo-shell">
+          <aside class="demo-console">
+            <p class="mono console-label">INTERACTIVE PROTOTYPE</p>
+            <h3>四个动作，走完一条阅读路径。</h3>
+            <p class="console-copy">页面里的数据都是示例。它只演示界面与状态变化，不会连接真实书源，也不会发起搜索请求。</p>
+            <ol class="demo-steps">
+              <li><button type="button" data-demo="search"><span><i>01</i> 搜一本书</span><b>→</b></button></li>
+              <li><button type="button" data-demo="reader"><span><i>02</i> 打开阅读器</span><b>→</b></button></li>
+              <li><button type="button" data-demo="downloads"><span><i>03</i> 暂停与续传</span><b>→</b></button></li>
+              <li><button type="button" data-demo="sources"><span><i>04</i> 切换书源</span><b>→</b></button></li>
+            </ol>
+            <div class="demo-hint" id="demo-hint">从「搜一本书」开始：输入关键词，看看 4 个来源如何合并成一张卡片。</div>
+            <p class="demo-note">演示模式 · 不连接真实书源</p>
+          </aside>
+
+          <div class="demo-device-wrap">
+            <div class="device device-demo" id="demo-device" aria-label="NovelRadar 交互演示">
+              <div class="device-notch" aria-hidden="true"></div>
+              <div class="app">
+                <div class="app-statusbar">
+                  <span>09:41</span>
+                  <span class="statusbar-right">5G <i class="battery"></i></span>
+                </div>
+                <div class="app-head">
+                  <div>
+                    <span class="app-kicker">NOVEL RADAR</span>
+                    <h2 class="app-title" id="app-title-demo">书架</h2>
+                  </div>
+                  <span class="app-chip"><i></i> DEMO</span>
+                </div>
+                <div class="screens" id="screens-demo">
+                  <section class="screen is-active" data-screen="library" aria-label="书架">
+                    <div class="screen-meta"><span>3 本在读</span><span>2 本更新</span></div>
+                    <button class="continue-card" data-open="reader" type="button">
+                      <span class="cover cover-a continue-cover"><span>长夜行舟</span><small>沈砚</small></span>
+                      <span class="continue-copy">
+                        <span class="mono">继续阅读</span>
+                        <strong>第 47 章 · 雾港</strong>
+                        <span class="continue-line">“灯在雾里亮了一夜。”</span>
+                        <span class="bar"><i style="width:68%"></i></span>
+                        <span class="continue-foot">68% · 3 分钟前</span>
+                      </span>
+                    </button>
+                    <div class="shelf-grid">
+                      <article class="book"><span class="cover cover-b"><span>山鬼来信</span></span><strong>山鬼来信</strong><small>第 12 章 · 34%</small></article>
+                      <article class="book"><span class="cover cover-c"><span>北纬十七度</span></span><strong>北纬十七度</strong><small>第 8 章 · 21%</small></article>
+                      <article class="book"><span class="cover cover-d"><span>纸上航线</span></span><strong>纸上航线</strong><small>第 22 章 · 57%</small></article>
+                    </div>
+                    <p class="app-footnote">已下载 2 本 · 仅 Wi-Fi 自动更新</p>
+                  </section>
+
+                  <section class="screen" data-screen="search" aria-label="搜书">
+                    <div class="screen-meta"><span>4 个来源已启用</span><span>聚合搜索</span></div>
+                    <form class="search-box" id="search-form-demo">
+                      <label class="sr-only" for="search-input-demo">搜索书名或作者</label>
+                      <input id="search-input-demo" name="q" value="长夜" autocomplete="off" spellcheck="false" />
+                      <button type="submit">搜索</button>
+                    </form>
+                    <div class="source-pills" aria-label="参与搜索的来源">
+                      <span class="is-on">主站</span><span class="is-on">备站</span><span class="is-on">镜像</span><span>自建</span>
+                    </div>
+                    <div class="search-result" id="search-result-demo">
+                      <button class="result-card" data-open="reader" type="button">
+                        <span class="cover cover-a result-cover"><span>长夜行舟</span></span>
+                        <span class="result-copy">
+                          <span class="mono">3 个来源 · 已合并</span>
+                          <strong>长夜行舟</strong>
+                          <span>沈砚 · 连载中 · 128 万字</span>
+                          <span class="result-sources"><i>主站</i><i>备站</i><i>镜像</i></span>
+                        </span>
+                        <span class="result-arrow">→</span>
+                      </button>
+                    </div>
+                    <p class="app-footnote">一个来源超时，不会拖垮整次搜索。</p>
+                  </section>
+
+                  <section class="screen" data-screen="reader" aria-label="阅读器">
+                    <div class="reader-bar">
+                      <button class="icon-btn" type="button" data-screen-jump="search" aria-label="返回搜书">←</button>
+                      <span>第 47 章 · 雾港</span>
+                      <span class="mono">68%</span>
+                    </div>
+                    <article class="reader-page" id="reader-page-demo" data-theme="paper">
+                      <p class="reader-kicker">第四十七章</p>
+                      <h3>雾港</h3>
+                      <p>雾从江面漫上来的时候，渡口的灯刚刚亮。</p>
+                      <p>沈砚把船票折成很小的一块，塞进袖口。他没有行李，只有一本翻旧了的《水经注》。</p>
+                      <p>对岸的城叫临渊，地图上只有一条细线连着这里。线的那头，有人在等他，也有人在找他。</p>
+                      <p>船夫解开缆绳，问：“去临渊做什么？”</p>
+                      <p>他说：“找一个人。”</p>
+                      <p>船夫笑了一声，竹篙点岸，船便滑进雾里。</p>
+                    </article>
+                    <div class="reader-tools">
+                      <div class="tool-group">
+                        <button type="button" data-font="-1" aria-label="减小字号">A−</button>
+                        <button type="button" data-font="1" aria-label="增大字号">A+</button>
+                      </div>
+                      <div class="tool-group themes" role="group" aria-label="阅读主题">
+                        <button class="swatch is-active" type="button" data-reader-theme="paper" aria-label="纸张主题"></button>
+                        <button class="swatch" type="button" data-reader-theme="day" aria-label="日间主题"></button>
+                        <button class="swatch" type="button" data-reader-theme="night" aria-label="夜间主题"></button>
+                      </div>
+                      <button class="mode-btn" type="button" id="mode-toggle-demo">分页</button>
+                    </div>
+                  </section>
+
+                  <section class="screen" data-screen="downloads" aria-label="下载管理">
+                    <div class="screen-meta"><span>2 个任务</span><span>仅 Wi-Fi</span></div>
+                    <div class="download-row" data-download data-progress="68" data-running="第 47 / 69 章 · 2.4 MB/s">
+                      <span class="cover cover-a download-cover"><span>长夜行舟</span></span>
+                      <div class="download-copy">
+                        <div class="download-line"><strong>长夜行舟</strong><span class="mono" data-progress-label>68%</span></div>
+                        <span class="bar"><i style="width:68%"></i></span>
+                        <small>第 47 / 69 章 · 2.4 MB/s</small>
+                      </div>
+                      <button class="mini-btn" type="button" data-toggle-download>暂停</button>
+                    </div>
+                    <div class="download-row is-paused" data-download data-progress="24" data-running="第 3 / 18 章 · 下载中">
+                      <span class="cover cover-b download-cover"><span>山鬼来信</span></span>
+                      <div class="download-copy">
+                        <div class="download-line"><strong>山鬼来信</strong><span class="mono" data-progress-label>24%</span></div>
+                        <span class="bar"><i style="width:24%"></i></span>
+                        <small>第 3 / 18 章 · 已暂停</small>
+                      </div>
+                      <button class="mini-btn" type="button" data-toggle-download>继续</button>
+                    </div>
+                    <div class="download-row is-done" data-download data-progress="100">
+                      <span class="cover cover-c download-cover"><span>北纬十七度</span></span>
+                      <div class="download-copy">
+                        <div class="download-line"><strong>北纬十七度</strong><span class="mono" data-progress-label>100%</span></div>
+                        <span class="bar"><i style="width:100%"></i></span>
+                        <small>已完成 · 可离线阅读</small>
+                      </div>
+                      <button class="mini-btn" type="button" disabled>已读</button>
+                    </div>
+                    <p class="app-footnote">章节逐章写入，中断后从检查点继续。</p>
+                  </section>
+
+                  <section class="screen" data-screen="sources" aria-label="书源管理">
+                    <div class="screen-meta"><span>12 条内置规则</span><button class="mini-btn" type="button" id="test-sources-demo">测试全部</button></div>
+                    <div class="source-row" data-source>
+                      <div><strong>主站规则</strong><small data-note="HTTPS · 128ms">HTTPS · 128ms</small></div>
+                      <span class="health is-ok" data-health>健康</span>
+                      <label class="switch"><input type="checkbox" checked aria-label="启用主站规则" /><span></span></label>
+                    </div>
+                    <div class="source-row" data-source>
+                      <div><strong>备站规则</strong><small data-note="HTTPS · 246ms">HTTPS · 246ms</small></div>
+                      <span class="health is-ok" data-health>健康</span>
+                      <label class="switch"><input type="checkbox" checked aria-label="启用备站规则" /><span></span></label>
+                    </div>
+                    <div class="source-row" data-source>
+                      <div><strong>镜像规则</strong><small data-note="HTTPS · 410ms">HTTPS · 410ms</small></div>
+                      <span class="health is-slow" data-health>较慢</span>
+                      <label class="switch"><input type="checkbox" checked aria-label="启用镜像规则" /><span></span></label>
+                    </div>
+                    <div class="source-row" data-source>
+                      <div><strong>自建规则</strong><small data-note="HTTP · 需确认">HTTP · 已停用</small></div>
+                      <span class="health" data-health>已停用</span>
+                      <label class="switch"><input type="checkbox" aria-label="启用自建规则" /><span></span></label>
+                    </div>
+                    <p class="app-footnote">只访问公开页面，不绕过站点访问控制。</p>
+                  </section>
+                </div>
+
+                <nav class="app-nav" aria-label="应用导航">
+                  <button class="is-active" type="button" data-screen="library" aria-pressed="true">
+                    <svg class="icon" aria-hidden="true"><use href="#i-shelf"></use></svg><span>书架</span>
+                  </button>
+                  <button type="button" data-screen="search" aria-pressed="false">
+                    <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg><span>搜书</span>
+                  </button>
+                  <button type="button" data-screen="downloads" aria-pressed="false">
+                    <svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg><span>下载</span>
+                  </button>
+                  <button type="button" data-screen="sources" aria-pressed="false">
+                    <svg class="icon" aria-hidden="true"><use href="#i-sources"></use></svg><span>书源</span>
+                  </button>
+                </nav>
+              </div>
+            </div>
+            <p class="demo-device-caption mono">DEMO DEVICE / 360 × 720</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="tech">
+      <header class="section-head">
+        <p class="section-label">03 / SPEC</p>
+        <div>
+          <h2>一把安静的工程尺。</h2>
+          <p>没有账号系统，没有推荐流，也没有服务端。所有复杂度都收在书源引擎和本地存储里，剩下的交给阅读。</p>
+        </div>
+      </header>
+      <div class="spec-grid">
+        <div class="spec-copy">
+          <p class="mono">BUILD NOTES</p>
+          <p>规格驱动 + TDD。先写设计与实施计划，再按任务补测试、实现、回归和验收。开发过程中使用 Codex AI 编程代理协助代码生成与测试补齐，维护者负责架构决策、验收与发布。</p>
+          <p class="spec-quote">“阅读器只做一件事：让正文留在视线里。”</p>
+        </div>
+        <dl class="spec-list">
+          <div class="spec-row"><dt>客户端</dt><dd>Kotlin 2.4.10 · Jetpack Compose · Navigation · Coroutines</dd></div>
+          <div class="spec-row"><dt>数据</dt><dd>Room 2.8.5 + KSP · DataStore · 章节文件原子写入</dd></div>
+          <div class="spec-row"><dt>后台</dt><dd>WorkManager 2.11.2 · 前台通知 · 断点恢复</dd></div>
+          <div class="spec-row"><dt>解析</dt><dd>OkHttp 5.3 · Jsoup 1.23 · CSS / XPath · QuickJS 沙箱</dd></div>
+          <div class="spec-row"><dt>测试</dt><dd>596 个单元测试 · 54 个套件 · MockWebServer</dd></div>
+          <div class="spec-row"><dt>交付</dt><dd>Android 8.0+ · 34 MB APK · AGPL-3.0</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="download" id="download">
+      <div class="download-inner">
+        <div class="download-copy">
+          <p class="section-label mono">04 / DOWNLOAD</p>
+          <h2>带一本雷达上路。</h2>
+          <p>v0.1.0 是第一个可安装测试包。Debug 签名，适合试用，不适合上架。源码、设计记录与书源规则都在 GitHub。</p>
+        </div>
+        <div class="download-card">
+          <div class="download-card-head">
+            <span class="mono">LATEST BUILD</span>
+            <span class="app-chip dark"><i></i> DEBUG</span>
+          </div>
+          <strong class="download-version">v0.1.0</strong>
+          <p>Android 8.0+ · 34,229,500 bytes · minSdk 26</p>
+          <a class="button button-light" href="https://github.com/143157/NovelRadar/releases/download/v0.1.0/NovelRadar-0.1.0-test-indent-b15b995.apk" target="_blank" rel="noreferrer">
+            下载 APK <span>↗</span>
+          </a>
+          <div class="download-links">
+            <a class="text-link light" href="https://github.com/143157/NovelRadar/releases/tag/v0.1.0" target="_blank" rel="noreferrer">Release 说明 <span>↗</span></a>
+            <a class="text-link light" href="https://github.com/143157/NovelRadar" target="_blank" rel="noreferrer">源代码 · AGPL-3.0 <span>↗</span></a>
+          </div>
+          <small>演示页不连接真实书源；APK 内的在线书源由站点可用性决定。</small>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-foot">
+    <div class="brand footer-brand">
+      <img src="assets/novelradar-icon-256.png" width="28" height="28" alt="" />
+      <span class="brand-copy"><strong>NovelRadar</strong><small>小说雷达</small></span>
+    </div>
+    <p>一个本地优先的 Android 阅读器 · 交互演示</p>
+    <div class="foot-links">
+      <a href="https://github.com/143157/NovelRadar" target="_blank" rel="noreferrer">GitHub</a>
+      <a href="https://github.com/143157/NovelRadar/releases/tag/v0.1.0" target="_blank" rel="noreferrer">Release</a>
+      <a href="https://github.com/143157/NovelRadar/blob/main/docs/third-party-rule-notice.md" target="_blank" rel="noreferrer">第三方规则声明</a>
+    </div>
+  </footer>
+
+  <script src="demo.js"></script>
+</body>
+</html>

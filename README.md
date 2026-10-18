@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/user-app-icon.png" width="112" alt="NovelRadar 应用图标" />
+  <img src="docs/assets/novelradar-icon-256.png" width="112" alt="NovelRadar 应用图标" />
 </p>
 
 <h1 align="center">NovelRadar 小说雷达</h1>
@@ -13,6 +13,14 @@
   <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white" />
   <img alt="Compose" src="https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?logo=jetpackcompose&logoColor=white" />
   <img alt="License" src="https://img.shields.io/badge/License-AGPL--3.0-blue" />
+</p>
+
+<p align="center">
+  <a href="https://143157.github.io/NovelRadar/"><strong>在线交互演示</strong></a>
+  ·
+  <a href="https://github.com/143157/NovelRadar/releases/tag/v0.1.0">下载 v0.1.0 APK</a>
+  ·
+  <a href="https://github.com/143157/NovelRadar">GitHub 源码</a>
 </p>
 
 > **当前 Release 是 Debug 测试包，不是生产签名版本。** 仅用于开发验证与个人试用。
